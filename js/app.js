@@ -10,7 +10,8 @@ import { dist, fmtDist, distNum } from './geo.js';
 import { store } from './store.js';
 import { GPS } from './gps.js';
 import { getCourse, nearestHole, greenDistances } from './course.js';
-import { CLUBS, club, parseClub, Caddie } from './caddie.js';
+import { CLUBS, CTX, club, parseClub, Caddie } from './caddie.js';
+import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
 import { CourseMap } from './map3d.js';
@@ -151,6 +152,8 @@ async function startRound(demo = false) {
       courseName: state.course.name,
       startedAt: Date.now(),
       demo,
+      courseKey: state.course.key,
+      pars: Object.fromEntries(data.holes.filter(h => h.par).map(h => [h.num, h.par])),
       shots: [],
     };
 
@@ -306,7 +309,7 @@ function updateGlance() {
   $('#dist-front').textContent = g.approx ? '' : `F ${distNum(g.front, u)}`;
   $('#dist-back').textContent = g.approx ? '' : `B ${distNum(g.back, u)}`;
 
-  const reco = caddie.recommend(g.middle);
+  const reco = caddie.recommend(g.middle, shotContext(pos, state.hole));
   const c = club(reco.primary);
   const learnedTag = caddie.learned(reco.primary) >= 2 ? '' : ' (default)';
   $('#club-reco').textContent =
@@ -339,6 +342,14 @@ async function markShotManually() {
 
 const YES_RE = /\b(yes|yeah|yep|yup|correct|right|aye|confirm)\b/i;
 const NO_RE = /\b(no|nope|nah|wrong|change)\b/i;
+
+/** Where is this shot being played from? 'tee' | 'app' | 'sg' */
+function shotContext(pos, hole) {
+  if (!pos || !hole) return 'app';
+  if (dist(pos, hole.tee) < 35) return 'tee';
+  if (dist(pos, hole.greenCenter) < 45) return 'sg';
+  return 'app';
+}
 
 async function recordShotInteractive(heardPhrase) {
   const pos = activeGps.position;
@@ -388,6 +399,7 @@ function recordShot(clubId, pos, confirmed) {
     hole: state.hole?.num || null,
     club: clubId,
     confirmed: !!confirmed,
+    ctx: shotContext(pos, state.hole),
     pos: { lat: pos.lat, lng: pos.lng },
     carryM: null,
   };
@@ -409,7 +421,7 @@ function finalizePendingShot(landingPos) {
   state.pendingShot = null;
   // Only player-confirmed clubs teach the caddie; unconfirmed shots keep
   // their carry on the scorecard but never touch the averages.
-  const counted = p.confirmed && caddie.recordCarry(p.club, carry);
+  const counted = p.confirmed && caddie.recordCarry(p.club, carry, p.ctx || 'app');
   store.saveRound(state.round);
   if (counted) {
     toast(`${club(p.club).label}: ${fmtDist(carry, state.settings.units)} — noted`, 3000);
@@ -452,7 +464,7 @@ async function askCaddie() {
     return;
   }
   const g = greenDistances(pos, state.hole);
-  const reco = caddie.recommend(g.middle);
+  const reco = caddie.recommend(g.middle, shotContext(pos, state.hole));
   const c = club(reco.primary);
   const alt = reco.alt ? club(reco.alt) : null;
 
@@ -496,15 +508,79 @@ async function endRound() {
   state.pendingShot = null;
 }
 
+/* ------------------------------------------------------------ insights */
+
+const esc = (s) => String(s).replace(/[&<>"]/g, ch =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
 function showStats() {
-  const rows = caddie.summary();
-  const tbody = $('#stats-body');
-  tbody.innerHTML = rows.length
-    ? rows.map(r =>
-        `<tr><td>${r.label}</td><td>${r.avgYd}</td><td>${r.bestYd}</td><td>${r.count}</td></tr>`
-      ).join('')
-    : '<tr><td colspan="4">No shots measured yet — play a round!</td></tr>';
+  renderInsightTab('clubs');
   $('#stats-sheet').classList.remove('hidden');
+}
+
+function renderInsightTab(tab) {
+  for (const b of document.querySelectorAll('#insight-tabs button')) {
+    b.classList.toggle('on', b.dataset.tab === tab);
+  }
+  const el = $('#stats-body');
+  if (tab === 'clubs') el.innerHTML = renderClubs();
+  else if (tab === 'course') el.innerHTML = renderCourseBook();
+  else el.innerHTML = renderTips();
+}
+
+function renderClubs() {
+  const rows = caddie.summary();
+  if (!rows.length) return `<p class="empty">No measured shots yet — play a round and confirm your clubs.</p>`;
+  return rows.map(r => {
+    const splits = Object.entries(CTX)
+      .filter(([k]) => r.ctx[k])
+      .map(([k, name]) => `${name} ${r.ctx[k].avgYd}`)
+      .join(' · ');
+    const spread = r.spreadYd !== null ? ` · ±${r.spreadYd}` : '';
+    return `<div class="icard">
+      <div class="icard-top"><span class="icard-title">${esc(r.label)}</span>
+        <span class="icard-big">${r.avgYd}<small> yd</small></span></div>
+      <div class="icard-sub">${splits || 'Building picture…'}${spread} · best ${r.bestYd} · ${r.count} shots</div>
+    </div>`;
+  }).join('');
+}
+
+function renderCourseBook() {
+  const rounds = store.getRounds();
+  const courses = courseList(rounds);
+  if (!courses.length) return `<p class="empty">No rounds saved yet.</p>`;
+  const name = state.insightCourse && courses.some(c => c.name === state.insightCourse)
+    ? state.insightCourse : courses[0].name;
+  state.insightCourse = name;
+
+  const select = courses.length > 1
+    ? `<select id="course-select">${courses.map(c =>
+        `<option ${c.name === name ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`
+    : `<div class="icard-sub" style="text-align:center">${esc(name)}</div>`;
+
+  const courseKey = rounds.find(r => r.courseName === name)?.courseKey;
+  const book = courseBook(rounds, name, (holeNum) => store.getTip(courseKey || name, holeNum));
+  if (!book.length) return `${select}<p class="empty">No hole-by-hole data for this course yet.</p>`;
+
+  return select + book.map(h => {
+    const par = h.par ? ` · Par ${h.par}` : '';
+    const vsPar = h.par ? ` (${h.avgShots - h.par >= 0 ? '+' : ''}${(h.avgShots - h.par).toFixed(1)})` : '';
+    const tee = h.teeClub
+      ? `Off the tee: ${esc(club(h.teeClub).label)} ×${h.teeCount}${h.teeAvgYd ? ` — avg ${h.teeAvgYd} yd` : ''}`
+      : 'Off the tee: no confirmed data yet';
+    return `<div class="icard">
+      <div class="icard-top"><span class="icard-title">Hole ${h.num}${par}</span>
+        <span class="icard-big">${h.avgShots.toFixed(1)}<small>${vsPar}</small></span></div>
+      <div class="icard-sub">${tee} · played ${h.plays}× · best ${h.bestShots}</div>
+      ${h.tip ? `<div class="icard-tip">“${esc(h.tip)}”</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderTips() {
+  const tips = smartTips(caddie, store.getRounds());
+  if (!tips.length) return `<p class="empty">Tips appear once a few rounds of confirmed shots are in the book.</p>`;
+  return tips.map(t => `<div class="icard icard-tipcard">${esc(t)}</div>`).join('');
 }
 
 /* ------------------------------------------------------------ settings */
@@ -544,6 +620,15 @@ function boot() {
   $('#settings-save').onclick = saveSettings;
   $('#settings-close').onclick = () => $('#settings-sheet').classList.add('hidden');
   $('#stats-close').onclick = () => $('#stats-sheet').classList.add('hidden');
+  for (const b of document.querySelectorAll('#insight-tabs button')) {
+    b.onclick = () => renderInsightTab(b.dataset.tab);
+  }
+  $('#stats-body').addEventListener('change', (e) => {
+    if (e.target.id === 'course-select') {
+      state.insightCourse = e.target.value;
+      renderInsightTab('course');
+    }
+  });
   $('#btn-caddie').onclick = askCaddie;
   $('#btn-shot').onclick = markShotManually;
   $('#btn-end').onclick = endRound;

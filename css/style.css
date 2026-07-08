@@ -295,19 +295,51 @@ input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--brass); 
 .row { display: flex; gap: 10px; }
 .row .big-btn { flex: 1; }
 
-#stats-table { width: 100%; border-collapse: collapse; font-size: 15px; }
-#stats-table th, #stats-table td {
-  padding: 10px 6px; text-align: left;
-  border-bottom: 1px solid rgba(200, 169, 106, 0.16);
+/* insights: segmented tabs + cards */
+.seg {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--brass-line); border-radius: 10px; overflow: hidden;
 }
-#stats-table td { font-family: var(--serif); font-variant-numeric: tabular-nums; }
-#stats-table th {
-  color: var(--brass);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 600;
+.seg button {
+  padding: 11px 4px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted);
 }
+.seg button + button { border-left: 1px solid var(--brass-line); }
+.seg button.on { background: rgba(200, 169, 106, 0.16); color: var(--brass-bright); }
+
+#stats-body { display: flex; flex-direction: column; gap: 10px; min-height: 120px; }
+.empty {
+  color: var(--muted); font-family: var(--serif); font-style: italic;
+  text-align: center; padding: 24px 8px;
+}
+.icard {
+  border: 1px solid rgba(200, 169, 106, 0.16);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: rgba(242, 234, 216, 0.03);
+}
+.icard-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.icard-title { font-family: var(--serif); font-size: 18px; }
+.icard-big {
+  font-family: var(--serif); font-size: 26px;
+  font-variant-numeric: tabular-nums; color: var(--brass-bright);
+}
+.icard-big small { font-size: 13px; color: var(--muted); }
+.icard-sub {
+  margin-top: 4px; font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.icard-tip {
+  margin-top: 8px; font-family: var(--serif); font-style: italic;
+  font-size: 14px; color: var(--brass-bright);
+}
+.icard-tipcard {
+  font-family: var(--serif); font-size: 16px; line-height: 1.55;
+  padding: 16px;
+}
+#course-select { width: 100%; }
 
 /* ------------------------------------------------ toast */
 

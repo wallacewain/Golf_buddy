@@ -56,28 +56,59 @@ export function parseClub(phrase) {
 const EWMA_ALPHA = 0.3;          // weight of the newest shot
 const MIN_FULL_SWING_M = ydToM(30); // ignore chips/duffs for carry learning
 
+/** Shot contexts: off the tee, approach (fairway/rough), short game. */
+export const CTX = { tee: 'Tee', app: 'Approach', sg: 'Short' };
+
 export class Caddie {
   constructor() {
     this.stats = store.getClubStats();
   }
 
-  /** Record a measured carry for a club. Returns true if it counted. */
-  recordCarry(clubId, meters) {
+  /**
+   * Record a measured carry for a club, split by shot context so you can
+   * see how a club performs off the tee vs. as a second shot vs. around
+   * the green. Returns true if it counted.
+   */
+  recordCarry(clubId, meters, ctx = 'app') {
     if (clubId === 'PT' || meters < MIN_FULL_SWING_M || meters > 400) return false;
-    const s = this.stats[clubId] || { count: 0, avgM: 0, bestM: 0 };
+    const s = this.stats[clubId] || { count: 0, avgM: 0, bestM: 0, varM: 0, ctx: {} };
+    s.ctx = s.ctx || {}; // migrate pre-context stats
     s.count += 1;
-    s.avgM = s.count === 1 ? meters : s.avgM + EWMA_ALPHA * (meters - s.avgM);
+    if (s.count === 1) {
+      s.avgM = meters;
+      s.varM = 0;
+    } else {
+      const prevAvg = s.avgM;
+      s.avgM += EWMA_ALPHA * (meters - s.avgM);
+      // EWMA variance → "±" consistency figure
+      s.varM = (1 - EWMA_ALPHA) * (s.varM || 0) + EWMA_ALPHA * (meters - prevAvg) ** 2;
+    }
     s.bestM = Math.max(s.bestM, meters);
+    const c = s.ctx[ctx] || { count: 0, avgM: 0 };
+    c.count += 1;
+    c.avgM = c.count === 1 ? meters : c.avgM + EWMA_ALPHA * (meters - c.avgM);
+    s.ctx[ctx] = c;
     this.stats[clubId] = s;
     store.saveClubStats(this.stats);
     return true;
   }
 
-  /** Carry (m) for a club: learned average if we have ≥2 shots, else default. */
-  carry(clubId) {
+  /**
+   * Carry (m) for a club. With a context and ≥3 shots in that context, the
+   * context average wins (your driver off the deck ≠ off a tee); otherwise
+   * the overall learned average (≥2 shots), otherwise the default table.
+   */
+  carry(clubId, ctx = null) {
     const s = this.stats[clubId];
+    if (ctx && s?.ctx?.[ctx]?.count >= 3) return s.ctx[ctx].avgM;
     if (s && s.count >= 2) return s.avgM;
     return ydToM(club(clubId).yd);
+  }
+
+  /** Consistency: ± meters around the average (null until ≥3 shots). */
+  spread(clubId) {
+    const s = this.stats[clubId];
+    return s && s.count >= 3 ? Math.sqrt(s.varM || 0) : null;
   }
 
   learned(clubId) {
@@ -86,11 +117,12 @@ export class Caddie {
   }
 
   /**
-   * Recommend a club for a target distance (m).
+   * Recommend a club for a target distance (m), optionally biased by shot
+   * context ('tee' | 'app' | 'sg') so tee-shot history informs tee shots.
    * Returns { primary, alt, note } where note flavours the advice
    * ("smooth", "step on it") based on how the carry compares.
    */
-  recommend(targetM) {
+  recommend(targetM, ctx = null) {
     if (targetM < ydToM(25)) {
       return { primary: 'PT', alt: 'LW', note: 'around the green' };
     }
@@ -99,7 +131,7 @@ export class Caddie {
     // so a learned club wins near-ties against a guess.
     const penalty = (id) => this.learned(id) >= 2 ? 0 : ydToM(5);
     const ranked = swingClubs
-      .map(c => ({ id: c.id, carryM: this.carry(c.id), diff: this.carry(c.id) - targetM }))
+      .map(c => ({ id: c.id, carryM: this.carry(c.id, ctx), diff: this.carry(c.id, ctx) - targetM }))
       .sort((a, b) => (Math.abs(a.diff) + penalty(a.id)) - (Math.abs(b.diff) + penalty(b.id)));
 
     const primary = ranked[0];
@@ -113,15 +145,26 @@ export class Caddie {
     return { primary: primary.id, alt: alt?.id || null, note };
   }
 
-  /** Clubs with learned data, for the stats screen. */
+  /** Clubs with learned data, for the insights screen. */
   summary() {
     return CLUBS
       .filter(c => this.stats[c.id]?.count)
-      .map(c => ({
-        id: c.id, label: c.label,
-        count: this.stats[c.id].count,
-        avgYd: Math.round(mToYd(this.stats[c.id].avgM)),
-        bestYd: Math.round(mToYd(this.stats[c.id].bestM)),
-      }));
+      .map(c => {
+        const s = this.stats[c.id];
+        const spread = this.spread(c.id);
+        const ctxYd = {};
+        for (const k of Object.keys(CTX)) {
+          const cs = s.ctx?.[k];
+          if (cs?.count) ctxYd[k] = { avgYd: Math.round(mToYd(cs.avgM)), count: cs.count };
+        }
+        return {
+          id: c.id, label: c.label,
+          count: s.count,
+          avgYd: Math.round(mToYd(s.avgM)),
+          bestYd: Math.round(mToYd(s.bestM)),
+          spreadYd: spread === null ? null : Math.round(mToYd(spread)),
+          ctx: ctxYd,
+        };
+      });
   }
 }

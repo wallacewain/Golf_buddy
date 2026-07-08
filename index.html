@@ -149,14 +149,16 @@
     </div>
   </div>
 
-  <!-- ============================== club stats sheet -->
+  <!-- ============================== insights sheet -->
   <div id="stats-sheet" class="sheet hidden">
     <div class="sheet-card">
-      <h2>My club distances</h2>
-      <table id="stats-table">
-        <thead><tr><th>Club</th><th>Avg (yd)</th><th>Best</th><th>Shots</th></tr></thead>
-        <tbody id="stats-body"></tbody>
-      </table>
+      <h2>Insights</h2>
+      <div id="insight-tabs" class="seg">
+        <button data-tab="clubs" class="on">Clubs</button>
+        <button data-tab="course">Course</button>
+        <button data-tab="tips">Tips</button>
+      </div>
+      <div id="stats-body"></div>
       <button id="stats-close" class="small-btn">Close</button>
     </div>
   </div>
