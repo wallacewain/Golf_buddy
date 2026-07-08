@@ -169,6 +169,10 @@ async function startRound(demo = false) {
     holeView = new HoleView($('#holecanvas'));
     hole3d = new Hole3D($('#hole3d'));
     if (!hole3d.supported()) hole3d = null; // no WebGL → 2D canvas carries it
+    if (hole3d) {
+      hole3d.onFollowChange = (following) =>
+        $('#btn-recenter').classList.toggle('hidden', following || state.view !== 'hole');
+    }
     setView('hole');
     mapReady.then(async (ok) => {
       if (!ok) return;
@@ -415,6 +419,8 @@ function setView(v) {
   $('#btn-view').textContent = v === 'map' ? 'Hole View' : '3D View';
   hole3d?.setVisible(v === 'hole');
   if (v === 'hole') hole3d?.resize();
+  $('#btn-recenter').classList.toggle('hidden',
+    v !== 'hole' || !hole3d || hole3d.follow);
   drawHoleView();
 }
 
@@ -738,6 +744,7 @@ function boot() {
   $('#btn-end').onclick = endRound;
   $('#hole-prev').onclick = () => stepHole(-1);
   $('#hole-next').onclick = () => stepHole(1);
+  $('#btn-recenter').onclick = () => hole3d?.recenter();
   $('#btn-dim').onclick = enterDim;
   $('#dim-screen').onclick = exitDim;
   $('#btn-note').onclick = openNote;

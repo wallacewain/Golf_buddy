@@ -53,6 +53,10 @@ export class Hole3D {
     this.playerLocal = null;
     this.lastPrediction = null;
     this._previewKey = '';
+    this.follow = true;              // camera tracks the ball until you pan
+    this.onFollowChange = null;      // app hook for the recenter button
+    this._ray = new THREE.Raycaster();
+    this._panVel = new THREE.Vector3();
   }
 
   supported() {
@@ -160,6 +164,8 @@ export class Hole3D {
       azimuth: Math.atan2(anchor.x, anchor.z), azimuthGoal: Math.atan2(anchor.x, anchor.z),
       elevation: 0.55, elevationGoal: 0.55,
     };
+    this._setFollow(true);
+    this._panVel.set(0, 0, 0);
     this._applyOrbit();
 
     if (this.playerLocal) this.updatePlayerLocal(this.playerLocal);
@@ -576,10 +582,34 @@ export class Hole3D {
     if (!this._ball || !this.scene) return;
     this._ball.visible = true;
     this._ball.position.set(p.x, this._h(p.x, p.z), p.z);
-    // frame the action: focus a third of the way from the ball to the green
-    if (this.orbit) {
+    // frame the action: focus a third of the way from the ball to the green,
+    // but never fight the player's own panning
+    if (this.orbit && this.follow) {
       const fx = p.x * 0.68, fz = p.z * 0.68;
       this.orbit.targetGoal.set(fx, this._h(fx, fz), fz);
+    }
+  }
+
+  /** Snap back to following the ball, framed down the hole. */
+  recenter() {
+    if (!this.orbit) return;
+    const anchor = this.playerLocal || (this.linePts ? this.linePts[0] : { x: 0, z: 0 });
+    const span = Math.max(40, Math.hypot(anchor.x, anchor.z));
+    const fx = anchor.x * 0.68, fz = anchor.z * 0.68;
+    this.orbit.targetGoal.set(fx, this._h(fx, fz), fz);
+    this.orbit.azimuthGoal = Math.atan2(anchor.x, anchor.z);
+    this.orbit.radiusGoal = clamp(span * 1.05, 130, 620);
+    this.orbit.elevationGoal = 0.55;
+    this._panVel.set(0, 0, 0);
+    this._setFollow(true);
+  }
+
+  _setFollow(v) {
+    if (this.follow !== v) {
+      this.follow = v;
+      this.onFollowChange?.(v);
+    } else {
+      this.onFollowChange?.(v); // keep the app's button state in sync on show()
     }
   }
 
@@ -597,52 +627,169 @@ export class Hole3D {
   _dampOrbit(dt) {
     const o = this.orbit;
     if (!o) return;
-    const k = 1 - Math.exp(-dt * 8); // smooth, frame-rate independent
+    // pan momentum (fling) — decays after the finger lifts
+    if (!this._gestureActive && this._panVel.lengthSq() > 0.05) {
+      o.target.addScaledVector(this._panVel, dt);
+      o.targetGoal.copy(o.target);
+      this._panVel.multiplyScalar(Math.exp(-dt * 4));
+      this._clampTarget();
+    }
+    const k = 1 - Math.exp(-dt * 9); // smooth, frame-rate independent
     o.azimuth += (o.azimuthGoal - o.azimuth) * k;
     o.elevation += (o.elevationGoal - o.elevation) * k;
     o.radius += (o.radiusGoal - o.radius) * k;
-    o.target.lerp(o.targetGoal, k * 0.6);
+    o.target.lerp(o.targetGoal, k);
     this._applyOrbit();
   }
 
+  /** Where a screen point hits the ground plane (at the target's height). */
+  _groundPoint(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1);
+    this._ray.setFromCamera(ndc, this.camera);
+    const { origin, direction } = this._ray.ray;
+    const t = (this.orbit.target.y - origin.y) / direction.y;
+    if (!isFinite(t) || t < 0) return null;
+    return origin.clone().addScaledVector(direction, t);
+  }
+
+  _clampTarget() {
+    const o = this.orbit, b = this.bounds;
+    if (!b) return;
+    o.target.x = clamp(o.target.x, b.minX - 40, b.minX + b.w + 40);
+    o.target.z = clamp(o.target.z, b.minZ - 40, b.minZ + b.d + 40);
+    o.targetGoal.x = clamp(o.targetGoal.x, b.minX - 40, b.minX + b.w + 40);
+    o.targetGoal.z = clamp(o.targetGoal.z, b.minZ - 40, b.minZ + b.d + 40);
+  }
+
+  /* Google-Maps-style gestures:
+   *   one finger  — pan; the ground point grabbed stays under the finger,
+   *                 with fling momentum on release
+   *   two fingers — pinch zooms toward the fingers, twisting rotates,
+   *                 dragging both vertically tilts
+   *   wheel       — zoom toward the cursor
+   */
   _bindControls() {
     const el = this.renderer.domElement;
     const pointers = new Map();
-    let pinchDist = 0;
+    let grab = null;          // world point pinned under the single finger
+    let lastMoveT = 0;
+    let pinch = null;         // { dist, angle, midY }
+    this._gestureActive = false;
+
+    const interact = () => {
+      this._gestureActive = true;
+      if (this.follow) this._setFollow(false);
+    };
 
     el.addEventListener('pointerdown', (e) => {
+      if (!this.orbit) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       el.setPointerCapture(e.pointerId);
-      if (pointers.size === 2) {
-        const [a, b] = [...pointers.values()];
-        pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-      }
-    });
-    el.addEventListener('pointermove', (e) => {
-      const prev = pointers.get(e.pointerId);
-      if (!prev || !this.orbit) return;
+      this._panVel.set(0, 0, 0);
       if (pointers.size === 1) {
-        this.orbit.azimuthGoal -= (e.clientX - prev.x) * 0.006;
-        this.orbit.elevationGoal = clamp(
-          this.orbit.elevationGoal + (e.clientY - prev.y) * 0.005, 0.18, 1.35);
-      }
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (pointers.size === 2) {
+        grab = this._groundPoint(e.clientX, e.clientY);
+        lastMoveT = performance.now();
+      } else if (pointers.size === 2) {
+        grab = null;
         const [a, b] = [...pointers.values()];
-        const nd = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinchDist > 0) {
-          this.orbit.radiusGoal = clamp(this.orbit.radiusGoal * pinchDist / nd, 60, 2000);
-        }
-        pinchDist = nd;
+        pinch = {
+          dist: Math.hypot(a.x - b.x, a.y - b.y),
+          angle: Math.atan2(b.y - a.y, b.x - a.x),
+          midX: (a.x + b.x) / 2,
+          midY: (a.y + b.y) / 2,
+        };
       }
     });
-    const drop = (e) => { pointers.delete(e.pointerId); pinchDist = 0; };
+
+    el.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId) || !this.orbit) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const o = this.orbit;
+
+      if (pointers.size === 1 && grab) {
+        // PAN: keep the grabbed ground point under the finger (1:1, no lag)
+        const now = this._groundPoint(e.clientX, e.clientY);
+        if (!now) return;
+        interact();
+        const delta = grab.clone().sub(now);
+        delta.y = 0;
+        o.target.add(delta);
+        o.targetGoal.copy(o.target);
+        this._clampTarget();
+        this._applyOrbit();
+        const t = performance.now();
+        const dt = Math.max(0.008, (t - lastMoveT) / 1000);
+        lastMoveT = t;
+        // blended velocity for the fling
+        this._panVel.lerp(delta.divideScalar(dt), 0.35);
+      } else if (pointers.size === 2 && pinch) {
+        const [a, b] = [...pointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+        interact();
+
+        // ZOOM toward the pinch midpoint
+        if (pinch.dist > 0 && dist > 0) {
+          const scale = clamp(pinch.dist / dist, 0.8, 1.25);
+          const gp = this._groundPoint(midX, midY);
+          o.radius = clamp(o.radius * scale, 50, 2000);
+          o.radiusGoal = o.radius;
+          if (gp) {
+            // keep the world point under the fingers fixed while zooming
+            o.target.lerpVectors(gp, o.target, scale);
+            o.targetGoal.copy(o.target);
+            this._clampTarget();
+          }
+        }
+        // TWIST rotates
+        let dA = angle - pinch.angle;
+        if (dA > Math.PI) dA -= 2 * Math.PI;
+        if (dA < -Math.PI) dA += 2 * Math.PI;
+        o.azimuth -= dA;
+        o.azimuthGoal = o.azimuth;
+        // two-finger vertical drag TILTS
+        o.elevation = clamp(o.elevation + (midY - pinch.midY) * 0.006, 0.18, 1.45);
+        o.elevationGoal = o.elevation;
+
+        pinch = { dist, angle, midX, midY };
+        this._applyOrbit();
+      }
+    });
+
+    const drop = (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 1) {
+        // pinch ended with one finger down — re-grab for panning
+        const p = [...pointers.values()][0];
+        grab = this._groundPoint(p.x, p.y);
+        this._panVel.set(0, 0, 0);
+      }
+      if (pointers.size === 0) {
+        grab = null;
+        this._gestureActive = false; // momentum takes over in the loop
+      }
+    };
     el.addEventListener('pointerup', drop);
     el.addEventListener('pointercancel', drop);
+
     el.addEventListener('wheel', (e) => {
       if (!this.orbit) return;
       e.preventDefault();
-      this.orbit.radiusGoal = clamp(this.orbit.radiusGoal * (1 + e.deltaY * 0.001), 60, 2000);
+      interact();
+      const o = this.orbit;
+      const scale = 1 + clamp(e.deltaY, -240, 240) * 0.0012;
+      const gp = this._groundPoint(e.clientX, e.clientY);
+      o.radiusGoal = clamp(o.radiusGoal * scale, 50, 2000);
+      if (gp) {
+        o.targetGoal.lerpVectors(gp, o.targetGoal, scale);
+        this._clampTarget();
+      }
+      this._gestureActive = false;
     }, { passive: false });
   }
 

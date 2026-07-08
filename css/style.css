@@ -157,6 +157,7 @@ h1 {
 }
 
 .chip-left { right: auto; left: 12px; }
+.chip-bottom { top: auto; bottom: 14px; left: 50%; right: auto; transform: translateX(-50%); }
 
 #hole-tip {
   margin-top: 6px;
