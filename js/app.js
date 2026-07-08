@@ -20,6 +20,9 @@ import { Hole3D } from './hole3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 
+// bump together with the sw.js cache version on every release
+const APP_VERSION = 'v10';
+
 /* ---------------------------------------------------------------- state */
 
 const state = {
@@ -754,8 +757,22 @@ function boot() {
   $('#btn-view').onclick = () => setView(state.view === 'map' ? 'hole' : 'map');
   window.addEventListener('resize', () => { drawHoleView(); hole3d?.resize(); });
 
+  $('#app-version').textContent = APP_VERSION;
+
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      reg.update().catch(() => {});
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        nw?.addEventListener('statechange', () => {
+          if (nw.state === 'activated') {
+            // new version fully cached — safe to swap in when not playing
+            if (state.round) toast('Update downloaded — applies after your round', 5000);
+            else location.reload();
+          }
+        });
+      });
+    }).catch(() => {});
   }
 }
 

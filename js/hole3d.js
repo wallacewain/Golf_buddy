@@ -748,8 +748,12 @@ export class Hole3D {
     this._applyOrbit();
   }
 
-  /** Where a screen point hits the ground plane (at the target's height). */
+  /** Where a screen point hits the ground plane (at the target's height).
+   *  Points near the horizon land absurdly far away — a 1 px finger move
+   *  there would fling the world — so hits are clamped to a sane distance
+   *  around the current focus. */
   _groundPoint(clientX, clientY) {
+    if (!this.camera || !this.orbit) return null;
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -758,7 +762,14 @@ export class Hole3D {
     const { origin, direction } = this._ray.ray;
     const t = (this.orbit.target.y - origin.y) / direction.y;
     if (!isFinite(t) || t < 0) return null;
-    return origin.clone().addScaledVector(direction, t);
+    const p = origin.clone().addScaledVector(direction, t);
+    const maxD = this.orbit.radius * 2.2;
+    const d = Math.hypot(p.x - this.orbit.target.x, p.z - this.orbit.target.z);
+    if (d > maxD) {
+      p.x = this.orbit.target.x + (p.x - this.orbit.target.x) * (maxD / d);
+      p.z = this.orbit.target.z + (p.z - this.orbit.target.z) * (maxD / d);
+    }
+    return p;
   }
 
   _clampTarget() {
@@ -834,8 +845,10 @@ export class Hole3D {
         const t = performance.now();
         const dt = Math.max(0.008, (t - lastMoveT) / 1000);
         lastMoveT = t;
-        // blended velocity for the fling
+        // blended, capped velocity for the fling
         this._panVel.lerp(delta.divideScalar(dt), 0.35);
+        const vMax = this.orbit.radius * 2.5;
+        if (this._panVel.length() > vMax) this._panVel.setLength(vMax);
       } else if (pointers.size === 2 && pinch) {
         const [a, b] = [...pointers.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y);

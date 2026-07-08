@@ -1,7 +1,9 @@
-/* sw.js — cache the app shell so Golf Buddy opens instantly on the course
- * (course data + maps still need signal, but the app itself works offline). */
+/* sw.js — offline app shell with stale-while-revalidate:
+ * loads are served instantly from cache, while a background fetch quietly
+ * refreshes the cache — so you're never more than one open() behind the
+ * latest version, and it still works with no signal on the course. */
 
-const CACHE = 'golf-buddy-v9';
+const CACHE = 'golf-buddy-v10';
 const SHELL = [
   './',
   './index.html',
@@ -38,16 +40,18 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Only handle same-origin GETs; maps/overpass go straight to the network.
+  // Only same-origin GETs; maps/overpass go straight to the network.
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    caches.match(e.request).then(hit =>
-      hit ||
-      fetch(e.request).then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy));
-        return res;
-      })
-    )
+    caches.open(CACHE).then(async (c) => {
+      const cached = await c.match(e.request);
+      const refresh = fetch(e.request)
+        .then((res) => {
+          if (res.ok) c.put(e.request, res.clone());
+          return res;
+        })
+        .catch(() => cached);
+      return cached || refresh;
+    })
   );
 });
