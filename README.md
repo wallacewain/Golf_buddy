@@ -34,15 +34,32 @@ simulates walking the Old Course so you can play with every feature at home.
 ### Google Maps 3D flyover (optional but pretty)
 
 Everything works without a key — you get the stylised 2D hole view instead.
-For the photorealistic 3D flyover:
 
-1. Create a key at [Google Cloud Console](https://console.cloud.google.com/google/maps-apis)
-   with **Maps JavaScript API** enabled (the free monthly credit is far more
-   than a season of golf will use).
-2. Open Golf Buddy → **⚙️ Settings** → paste the key → Save.
+**ELI5: what's an API key?** Google's 3D imagery isn't anonymous — Google
+wants to know who's asking for maps, so they give you a long password string
+(the "key") and your app shows it with every map request. Everyone gets a
+large free monthly allowance (~$200 worth); one golfer can't get close to it,
+so it's effectively free, but Google asks for a card at sign-up.
+
+**Getting your key (~5 minutes):**
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and
+   sign in with your normal Google account.
+2. Create a "project" (just a folder for your stuff) — call it `golf-buddy`.
+3. Add a card if it asks for billing (free-allowance thing; you won't be
+   charged for normal use).
+4. Search **"Maps JavaScript API"** at the top → click it → press **Enable**.
+5. Left menu → **Keys & Credentials** → **Create credentials** → **API key**.
+   Copy the long `AIza...` string.
+6. Open Golf Buddy → **⚙️ Settings** → paste the key → **Save**. Done.
+
+**Safety step (recommended):** your site's code is public, so lock the key to
+your site: in the console click the key → **Application restrictions** →
+**Websites** → add your domain (e.g. `wallacewain.github.io`). Now the key is
+useless anywhere else.
 
 The key is stored only in your browser's localStorage — it never leaves your
-phone. Restrict the key to your GitHub Pages domain in the Cloud Console.
+phone.
 
 ### Course data
 
