@@ -1,0 +1,14 @@
+{
+  "name": "Golf Buddy",
+  "short_name": "GolfBuddy",
+  "description": "Hands-free GPS caddie: finds your course, hears your shots, learns your club distances.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d2b16",
+  "theme_color": "#0d2b16",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

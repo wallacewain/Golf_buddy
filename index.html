@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0d2b16">
+  <meta name="description" content="Golf Buddy — a hands-free GPS caddie that finds your course, shows a 3D flyover, hears your shots and learns your club distances.">
+  <title>Golf Buddy</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ============================== start screen -->
+  <section id="start-screen">
+    <div class="hero">
+      <div class="logo">⛳</div>
+      <h1>Golf Buddy</h1>
+      <p class="tagline">Your hands-free GPS caddie.<br>
+        It finds the course, hears your shots,<br>and learns how far you really hit each club.</p>
+    </div>
+    <div class="start-actions">
+      <button id="btn-start" class="big-btn primary">Start Round</button>
+      <button id="btn-demo" class="big-btn ghost">Try demo (St Andrews)</button>
+      <div class="row">
+        <button id="btn-stats" class="small-btn">📊 My clubs</button>
+        <button id="btn-settings" class="small-btn">⚙️ Settings</button>
+      </div>
+    </div>
+    <p class="fineprint">Needs GPS + mic permission on the course. Add a Google Maps key in Settings for the 3D flyover — everything else works without it.</p>
+  </section>
+
+  <!-- ============================== round screen -->
+  <section id="round-screen" class="hidden">
+    <header id="topbar">
+      <div id="course-name">—</div>
+      <div class="hole-nav">
+        <button id="hole-prev" class="nav-btn" aria-label="Previous hole">‹</button>
+        <div id="hole-label">Locating…</div>
+        <button id="hole-next" class="nav-btn" aria-label="Next hole">›</button>
+      </div>
+    </header>
+
+    <div id="viewwrap">
+      <div id="map"></div>
+      <canvas id="holecanvas" class="hidden"></canvas>
+      <button id="btn-view" class="chip">⛳ Hole view</button>
+      <div id="status"></div>
+    </div>
+
+    <div id="glance">
+      <div class="dist-block">
+        <div id="dist-front" class="dist-small"></div>
+        <div id="dist-mid">—</div>
+        <div id="dist-back" class="dist-small"></div>
+      </div>
+      <div id="club-reco"></div>
+    </div>
+
+    <nav id="actionbar">
+      <button id="btn-caddie" class="action primary" aria-label="Ask caddie">🎙️<span>Caddie</span></button>
+      <button id="btn-shot" class="action" aria-label="Mark a shot">🏌️<span>Shot</span></button>
+      <button id="btn-settings-2" class="action" aria-label="Settings">⚙️<span>More</span></button>
+      <button id="btn-end" class="action danger" aria-label="End round">🏁<span>End</span></button>
+    </nav>
+    <div id="shot-count"></div>
+  </section>
+
+  <!-- ============================== club picker sheet -->
+  <div id="club-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>Which club?</h2>
+      <div id="club-grid"></div>
+      <button id="club-cancel" class="small-btn">Not a shot / cancel</button>
+    </div>
+  </div>
+
+  <!-- ============================== settings sheet -->
+  <div id="settings-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>Settings</h2>
+      <label>Google Maps API key <span class="hint">(for the 3D flyover — free tier is plenty)</span>
+        <input id="set-apikey" type="text" placeholder="AIza..." autocomplete="off">
+      </label>
+      <label>Units
+        <select id="set-units">
+          <option value="yd">Yards</option>
+          <option value="m">Meters</option>
+        </select>
+      </label>
+      <label class="check"><input id="set-voice" type="checkbox"> Voice announcements</label>
+      <label class="check"><input id="set-listen" type="checkbox"> Listen for shots with the mic</label>
+      <label>Shot detection sensitivity
+        <select id="set-sensitivity">
+          <option value="low">Low (noisy days)</option>
+          <option value="normal">Normal</option>
+          <option value="high">High (quiet course)</option>
+        </select>
+      </label>
+      <div class="row">
+        <button id="settings-save" class="big-btn primary">Save</button>
+        <button id="settings-close" class="small-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== club stats sheet -->
+  <div id="stats-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>My club distances</h2>
+      <table id="stats-table">
+        <thead><tr><th>Club</th><th>Avg (yd)</th><th>Best</th><th>Shots</th></tr></thead>
+        <tbody id="stats-body"></tbody>
+      </table>
+      <button id="stats-close" class="small-btn">Close</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
