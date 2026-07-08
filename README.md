@@ -75,7 +75,9 @@ and helps every golfer who plays it.
 |---|---|
 | Tap **Start Round** on the first tee | Finds the course, flies to your hole, starts listening |
 | Hit a shot | Chirps, then asks **"What club?"** — say it, done |
-| Say nothing / it mishears | Shows a big club grid to tap once |
+| Say the club, then **"yes"** when it reads it back | Confirms the club — only confirmed clubs train your averages |
+| Say nothing / it mishears | Shows a big club grid to tap once (a tap counts as confirmed) |
+| Tap **Hole Note** and jot a tip ("aim left of the bunker") | Saves it for that hole and reads it back next time you're on that tee |
 | Tap 🎙️ **Caddie** (or glance at the screen) | Speaks distance to the green + club recommendation |
 | Walk to the next tee | Auto-advances to the next hole and announces it |
 | Putt out & tap 🏁 **End** | Saves the round and updates your club distances |
@@ -91,17 +93,23 @@ grid automatically.
 
 - Each shot is stamped with GPS. When you hit the *next* shot, the distance
   between the two points is the previous club's carry.
+- **Only confirmed clubs count** — a tap on the club grid, or a spoken "yes"
+  after the club is read back. If the mic mishears and you don't confirm,
+  the shot stays on the scorecard but never touches your averages.
 - Carries feed a recency-weighted average per club (chips under 30 yards and
   putts are excluded so they don't drag your averages down).
 - Recommendations use *your* averages once a club has 2+ measured shots;
   before that, sensible defaults. Check **📊 My clubs** to see what it's
   learned.
 
-## Privacy
+## Privacy — everything lives on your phone
 
-Everything — rounds, shots, club stats, your API key — stays in your
-browser's local storage. The only network calls are to the Overpass API
-(course geometry) and Google Maps (map tiles, if you added a key).
+There is no account, no server, and no database. Rounds, shots, club stats,
+hole notes, cached course data and your API key all live in your browser's
+local storage on the device. Nothing you record is ever uploaded. The only
+network calls are *downloads*: course geometry from the Overpass API and map
+tiles from Google (if you added a key). Clearing the browser's site data
+erases everything, so treat that as the "factory reset".
 
 ## Development
 

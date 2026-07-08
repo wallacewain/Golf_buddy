@@ -4,6 +4,7 @@ const KEYS = {
   settings: 'gb.settings.v1',
   clubs: 'gb.clubstats.v1',
   rounds: 'gb.rounds.v1',
+  tips: 'gb.holetips.v1',
 };
 
 const DEFAULT_SETTINGS = {
@@ -35,6 +36,19 @@ export const store = {
   /** Club stats: { [clubId]: { count, avgM, bestM } } */
   getClubStats() { return read(KEYS.clubs, {}); },
   saveClubStats(stats) { localStorage.setItem(KEYS.clubs, JSON.stringify(stats)); },
+
+  /** Per-hole notes: { [courseKey]: { [holeNum]: "aim left of the bunker" } } */
+  getTip(courseKey, holeNum) {
+    return read(KEYS.tips, {})[courseKey]?.[holeNum] || '';
+  },
+  saveTip(courseKey, holeNum, text) {
+    const tips = read(KEYS.tips, {});
+    if (!tips[courseKey]) tips[courseKey] = {};
+    if (text.trim()) tips[courseKey][holeNum] = text.trim();
+    else delete tips[courseKey][holeNum];
+    if (!Object.keys(tips[courseKey]).length) delete tips[courseKey];
+    localStorage.setItem(KEYS.tips, JSON.stringify(tips));
+  },
 
   getRounds() { return readArr(KEYS.rounds); },
   saveRound(round) {

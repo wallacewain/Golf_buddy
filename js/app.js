@@ -141,6 +141,7 @@ async function startRound(demo = false) {
     }
 
     state.course = {
+      key: course?.id || course?.name || 'unknown', // stable key for hole notes
       name: course?.name || 'Unknown course',
       holes: data.holes,
       features: data.features,
@@ -210,11 +211,17 @@ function setHole(hole, { announce = true } = {}) {
   state.hole = hole;
   if (!hole) {
     $('#hole-label').textContent = 'No hole data';
+    $('#hole-tip').classList.add('hidden');
     return;
   }
   const len = hole.distM || dist(hole.tee, hole.greenCenter);
   $('#hole-label').textContent =
     `Hole ${hole.num}${hole.par ? ` · Par ${hole.par}` : ''} · ${fmtDist(len, state.settings.units)}`;
+
+  const tip = store.getTip(state.course.key, hole.num);
+  $('#hole-tip').textContent = tip ? `“${tip}”` : '';
+  $('#hole-tip').classList.toggle('hidden', !tip);
+
   courseMap?.showHole(hole, activeGps.position);
   drawHoleView();
   updateGlance();
@@ -222,9 +229,27 @@ function setHole(hole, { announce = true } = {}) {
     voice.speak(
       `Hole ${hole.num}. ` +
       (hole.par ? `Par ${hole.par}, ` : '') +
-      `${speakableDist(len)}.`
+      `${speakableDist(len)}.` +
+      (tip ? ` Your note: ${tip}` : '')
     );
   }
+}
+
+/* ------------------------------------------------------------ hole notes */
+
+function openNote() {
+  if (!state.hole) { toast('No hole selected'); return; }
+  $('#note-title').textContent = `Hole ${state.hole.num} Note`;
+  $('#note-text').value = store.getTip(state.course.key, state.hole.num);
+  $('#note-sheet').classList.remove('hidden');
+}
+
+function saveNote() {
+  if (!state.hole) return;
+  store.saveTip(state.course.key, state.hole.num, $('#note-text').value);
+  $('#note-sheet').classList.add('hidden');
+  setHole(state.hole, { announce: false }); // refresh the tip line
+  toast('Note saved — I’ll remind you on this tee');
 }
 
 function stepHole(delta) {
@@ -312,6 +337,9 @@ async function markShotManually() {
   await recordShotInteractive(null);
 }
 
+const YES_RE = /\b(yes|yeah|yep|yup|correct|right|aye|confirm)\b/i;
+const NO_RE = /\b(no|nope|nah|wrong|change)\b/i;
+
 async function recordShotInteractive(heardPhrase) {
   const pos = activeGps.position;
   if (!pos || !state.round) return;
@@ -322,23 +350,36 @@ async function recordShotInteractive(heardPhrase) {
   buzz();
   chime();
 
+  // Club stats only learn from shots the player has explicitly confirmed —
+  // a tap on the grid, or a spoken "yes" after the club is read back. A
+  // misheard club still logs the shot but never pollutes the averages.
   let clubId = null;
+  let confirmed = false;
   if (voice.canListen && state.settings.voice) {
     await voice.speak(`${heardPhrase ? heardPhrase + ' ' : ''}What club?`);
     const heard = await voice.listenOnce({ timeoutMs: 6000 });
     clubId = heard ? parseClub(heard) : null;
-    if (!clubId && heard) {
+    if (clubId) {
+      await voice.speak(`${club(clubId).label} — correct?`);
+      const answer = await voice.listenOnce({ timeoutMs: 4000 });
+      if (YES_RE.test(answer)) confirmed = true;
+      else if (NO_RE.test(answer)) clubId = null; // re-pick on screen
+      // silence: keep the club for the scorecard, but leave it unconfirmed
+    } else if (heard) {
       await voice.speak("Didn't catch that — pick it on screen.");
     }
   }
-  if (!clubId) clubId = await pickClubOnScreen();
+  if (!clubId) {
+    clubId = await pickClubOnScreen();
+    confirmed = !!clubId; // a tap is an explicit confirmation
+  }
   shotListener?.setPaused(false);
   if (!clubId) return; // dismissed — not a shot
 
-  recordShot(clubId, pos);
+  recordShot(clubId, pos, confirmed);
 }
 
-function recordShot(clubId, pos) {
+function recordShot(clubId, pos, confirmed) {
   // The previous shot's ball has been found: it landed where this one is hit from.
   finalizePendingShot(pos);
 
@@ -346,6 +387,7 @@ function recordShot(clubId, pos) {
     t: Date.now(),
     hole: state.hole?.num || null,
     club: clubId,
+    confirmed: !!confirmed,
     pos: { lat: pos.lat, lng: pos.lng },
     carryM: null,
   };
@@ -354,7 +396,7 @@ function recordShot(clubId, pos) {
   store.saveRound(state.round);
 
   const c = club(clubId);
-  toast(`${c.label} logged${shot.hole ? ` on hole ${shot.hole}` : ''}`);
+  toast(`${c.label} logged${confirmed ? '' : ' (unconfirmed)'}${shot.hole ? ` on hole ${shot.hole}` : ''}`);
   voice.speak(`${c.label}. Got it.`);
   renderShotCount();
 }
@@ -365,7 +407,9 @@ function finalizePendingShot(landingPos) {
   const carry = dist(p.pos, landingPos);
   p.carryM = carry;
   state.pendingShot = null;
-  const counted = caddie.recordCarry(p.club, carry);
+  // Only player-confirmed clubs teach the caddie; unconfirmed shots keep
+  // their carry on the scorecard but never touch the averages.
+  const counted = p.confirmed && caddie.recordCarry(p.club, carry);
   store.saveRound(state.round);
   if (counted) {
     toast(`${club(p.club).label}: ${fmtDist(carry, state.settings.units)} — noted`, 3000);
@@ -505,6 +549,9 @@ function boot() {
   $('#btn-end').onclick = endRound;
   $('#hole-prev').onclick = () => stepHole(-1);
   $('#hole-next').onclick = () => stepHole(1);
+  $('#btn-note').onclick = openNote;
+  $('#note-save').onclick = saveNote;
+  $('#note-close').onclick = () => $('#note-sheet').classList.add('hidden');
   $('#btn-view').onclick = () => {
     state.userToggledView = true;
     setView(state.view === 'map' ? 'hole' : 'map');

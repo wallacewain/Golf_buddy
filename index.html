@@ -52,12 +52,14 @@
         <div id="hole-label">Locating…</div>
         <button id="hole-next" class="nav-btn" aria-label="Next hole">›</button>
       </div>
+      <div id="hole-tip" class="hidden"></div>
     </header>
 
     <div id="viewwrap">
       <div id="map"></div>
       <canvas id="holecanvas" class="hidden"></canvas>
       <button id="btn-view" class="chip">Hole View</button>
+      <button id="btn-note" class="chip chip-left">Hole Note</button>
       <div id="status"></div>
     </div>
 
@@ -101,6 +103,20 @@
       <h2>Which club?</h2>
       <div id="club-grid"></div>
       <button id="club-cancel" class="small-btn">Not a shot / cancel</button>
+    </div>
+  </div>
+
+  <!-- ============================== hole note sheet -->
+  <div id="note-sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2 id="note-title">Hole Note</h2>
+      <textarea id="note-text" rows="4" maxlength="280"
+        placeholder="e.g. Aim at the left bunker — everything kicks right. Wind swirls near the green."></textarea>
+      <p class="hint">Saved on this phone, per hole. Read aloud when you reach this tee.</p>
+      <div class="row">
+        <button id="note-save" class="big-btn primary">Save</button>
+        <button id="note-close" class="small-btn">Close</button>
+      </div>
     </div>
   </div>
 
