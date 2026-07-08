@@ -10,7 +10,7 @@ import { dist, fmtDist, distNum } from './geo.js';
 import { store } from './store.js';
 import { GPS } from './gps.js';
 import { getCourse, nearestHole, greenDistances } from './course.js';
-import { CLUBS, CTX, club, parseClub, Caddie } from './caddie.js';
+import { CLUBS, CTX, club, parseClub, rollFor, Caddie } from './caddie.js';
 import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
@@ -337,7 +337,10 @@ function showStylisedHole(hole) {
   if (!hole3d || !hole || !state.course) return;
   hole3d.show(hole, state.course.features,
     (latlngs) => getGoogleElevations(latlngs, `${state.course.key}/${hole.num}`))
-    .then(() => { if (activeGps.position) hole3d?.updatePlayer(activeGps.position); })
+    .then(() => {
+      if (activeGps.position) hole3d?.updatePlayer(activeGps.position);
+      updateGlance(); // scene is ready now — draw the landing preview
+    })
     .catch(e => console.warn('hole3d failed', e));
 }
 
@@ -379,11 +382,22 @@ function updateGlance() {
   $('#dist-front').textContent = g.approx ? '' : `F ${distNum(g.front, u)}`;
   $('#dist-back').textContent = g.approx ? '' : `B ${distNum(g.back, u)}`;
 
-  const reco = caddie.recommend(g.middle, shotContext(pos, state.hole));
+  const ctx = shotContext(pos, state.hole);
+  const reco = caddie.recommend(g.middle, ctx);
   const c = club(reco.primary);
   const learnedTag = caddie.learned(reco.primary) >= 2 ? '' : ' (default)';
   $('#club-reco').textContent =
     `${c.label}${reco.note ? ` — ${reco.note}` : ''}${learnedTag}`;
+
+  // landing ring + roll-out preview on the 3D hole (throttled internally)
+  if (hole3d && reco.primary !== 'PT') {
+    const carryM = caddie.carry(reco.primary, ctx);
+    hole3d.setShotPreview({
+      carryM,
+      spreadM: Math.max(9, caddie.spread(reco.primary) ?? carryM * 0.09),
+      rollM: rollFor(reco.primary),
+    });
+  }
 }
 
 function drawHoleView() {
@@ -555,6 +569,19 @@ async function askCaddie() {
     msg += '.';
     if (caddie.learned(reco.primary) >= 2) {
       msg += ` You average ${speakableDist(caddie.carry(reco.primary))} with it.`;
+    }
+    // terrain read from the 3D preview: kicks and funnels at the pitch point
+    const pred = hole3d?.lastPrediction;
+    if (pred?.hasSlope) {
+      if (pred.endRegion === 'water') {
+        msg += ` Careful — the slope feeds${pred.kick !== 'none' ? ` ${pred.kick}` : ''} toward the water.`;
+      } else if (pred.endRegion === 'bunker') {
+        msg += ` Watch it — the ground kicks${pred.kick !== 'none' ? ` ${pred.kick}` : ''} into the sand.`;
+      } else if (pred.endRegion === 'green') {
+        msg += ` The land should gather it onto the green.`;
+      } else if (pred.kick !== 'none') {
+        msg += ` Expect a kick to the ${pred.kick} on landing.`;
+      }
     }
   }
   shotListener?.setPaused(true);

@@ -1,7 +1,7 @@
 /* sw.js — cache the app shell so Golf Buddy opens instantly on the course
  * (course data + maps still need signal, but the app itself works offline). */
 
-const CACHE = 'golf-buddy-v6';
+const CACHE = 'golf-buddy-v7';
 const SHELL = [
   './',
   './index.html',

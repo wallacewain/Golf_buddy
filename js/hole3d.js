@@ -1,36 +1,49 @@
-/* hole3d.js — a stunning stylised 3D hole, built with Three.js.
+/* hole3d.js — the stylised 3D hole, rebuilt for polish.
  *
- * The shapes (green, fairway, tees, bunkers, water) come from the course
- * geometry we already have; real slopes come from Google's Elevation data
- * when an API key is present (flat but still pretty without). The look is
- * deliberate low-poly flat shading — crisp beautiful regions you can read
- * at a glance: where the fairway is, where the trouble is, where the pin is.
+ * - Terrain: smooth-shaded mesh displaced by real Google Elevation data,
+ *   painted by a high-resolution canvas texture (soft anti-aliased edges,
+ *   green fringes, mowing stripes, edge fade) instead of hard facets.
+ * - Slope flow: animated particles drift downhill like the slope lines in
+ *   golf video games — brighter and faster where the ground tilts more.
+ * - Shot preview: a landing ring at the recommended club's carry (sized by
+ *   your ± consistency) and a simulated roll-out line from the pitch point
+ *   that follows the terrain, colour-coded by where the ball likely ends.
+ * - Camera: orbits YOUR BALL with damped, game-feel controls (drag to
+ *   orbit, pinch/wheel to zoom), not the middle of the hole.
  *
- * Local frame: green centre at the origin, the hole playing down -Z toward
- * the camera-side tee at +Z. X is right-of-line. Y is up (meters).
+ * Local frame: green centre at origin, hole playing down -Z (tee at +Z).
  */
 
 import * as THREE from './vendor/three.module.js';
 import { dist, toRad } from './geo.js';
 
-const PALETTE = {
+const COL = {
   bg: 0x0d1d15,
-  rough: 0x1e4a2c,
-  roughDark: 0x184025,
-  fairway: 0x3e8b4f,
-  green: 0x5fbc72,
-  tee: 0x4a9c5b,
-  bunker: 0xe3cf9d,
-  water: 0x3a6ea8,
+  rough: '#20502f',
+  roughStripe: 'rgba(0,0,0,0.05)',
+  fairway: '#3f8f52',
+  fairwayStripe: 'rgba(255,255,255,0.045)',
+  green: '#5fc474',
+  fringe: '#4aa95f',
+  tee: '#3f8f52',
+  bunker: '#e6d3a3',
+  bunkerEdge: '#c9b587',
+  water: '#3f78b8',
+  waterDeep: '#2f5f96',
   pole: 0xf2ead8,
   flag: 0xc25b4e,
   line: 0xc8a96a,
   ball: 0xf6f2e7,
+  flow: new THREE.Color(0xfff3d0),
+  rollGood: 0x8df5a2,
+  rollNeutral: 0xffd97a,
+  rollBad: 0xff8a7a,
 };
 
-const CELL_M = 2.5;         // terrain facet size — small enough to read breaks
-const MAX_CELLS = 260;      // per axis, keeps long par 5s in budget
-const MARGIN_M = 45;        // rough shown around the hole corridor
+const CELL_M = 3;         // mesh resolution — smooth shading hides the grid
+const MAX_CELLS = 220;
+const MARGIN_M = 50;
+const FLOW_N = 1100;      // slope particles
 
 export class Hole3D {
   constructor(container) {
@@ -38,16 +51,18 @@ export class Hole3D {
     this.renderer = null;
     this.running = false;
     this.playerLocal = null;
+    this.lastPrediction = null;
+    this._previewKey = '';
   }
 
-  /** WebGL can be missing/blocked — callers fall back to the 2D canvas. */
   supported() {
     if (this.renderer) return true;
     try {
       this.renderer = new THREE.WebGLRenderer({ antialias: true });
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
       this.container.appendChild(this.renderer.domElement);
-      this.renderer.domElement.style.cssText = 'width:100%;height:100%;display:block;touch-action:none';
+      this.renderer.domElement.style.cssText =
+        'width:100%;height:100%;display:block;touch-action:none';
       this._bindControls();
       return true;
     } catch (e) {
@@ -57,21 +72,18 @@ export class Hole3D {
     }
   }
 
-  /* -------------------------------------------------- local projection */
+  /* ------------------------------------------------- projection frame */
 
   _frame(hole) {
     const o = hole.greenCenter;
     const a = bearingRad(hole.tee, o);
     const cosLat = Math.cos(toRad(o.lat));
-    const M = 111320; // meters per degree latitude
+    const M = 111320;
     return {
       toLocal: (p) => {
         const e = (p.lng - o.lng) * M * cosLat;
         const n = (p.lat - o.lat) * M;
-        return {
-          x: e * Math.cos(a) - n * Math.sin(a),
-          z: -(e * Math.sin(a) + n * Math.cos(a)),
-        };
+        return { x: e * Math.cos(a) - n * Math.sin(a), z: -(e * Math.sin(a) + n * Math.cos(a)) };
       },
       toWorld: (x, z) => {
         const s = -z;
@@ -82,69 +94,71 @@ export class Hole3D {
     };
   }
 
-  /**
-   * Build and show a hole.
-   * @param getElevations async (latlngs[]) => meters[] | null — Google data
-   */
+  /* --------------------------------------------------------- build */
+
   async show(hole, features, getElevations) {
     if (!this.renderer) return;
     this.hole = hole;
     this.frame = this._frame(hole);
+    this._previewKey = '';
     const { toLocal, toWorld } = this.frame;
 
-    // ---- extent of the scene in local meters
-    const pts = hole.line.map(toLocal);
-    let minX = -MARGIN_M, maxX = MARGIN_M, minZ = -MARGIN_M - 15, maxZ = MARGIN_M;
-    for (const p of pts) {
+    const linePts = hole.line.map(toLocal);
+    let minX = -MARGIN_M, maxX = MARGIN_M, minZ = -MARGIN_M - 20, maxZ = MARGIN_M;
+    for (const p of linePts) {
       minX = Math.min(minX, p.x - MARGIN_M); maxX = Math.max(maxX, p.x + MARGIN_M);
       minZ = Math.min(minZ, p.z - MARGIN_M); maxZ = Math.max(maxZ, p.z + MARGIN_M);
     }
     const w = maxX - minX, d = maxZ - minZ;
-    const nx = Math.min(MAX_CELLS, Math.max(24, Math.round(w / CELL_M)));
-    const nz = Math.min(MAX_CELLS, Math.max(24, Math.round(d / CELL_M)));
+    this.bounds = { minX, minZ, w, d };
+    this.linePts = linePts;
 
-    // ---- real terrain heights from Google Elevation (coarse grid, lerped)
     const heights = await this._heights(getElevations, toWorld, minX, minZ, w, d);
-    this._hm = { heights, minX, minZ, w, d };
+    this.heights = heights;
 
-    // ---- region polygons near this hole, in local coords
+    // region polygons in local coords (near this hole only)
     const near = (poly) => poly.some(p =>
       dist(p, hole.greenCenter) < 900 || dist(p, hole.tee) < 900);
     const local = (polys) => polys.filter(near).map(poly => poly.map(toLocal));
-    const regions = [
-      { polys: local(features.water), color: new THREE.Color(PALETTE.water), flat: true },
-      { polys: local(features.bunkers), color: new THREE.Color(PALETTE.bunker) },
-      { polys: local(features.tees), color: new THREE.Color(PALETTE.tee) },
-      { polys: hole.green ? local([hole.green]) : [], color: new THREE.Color(PALETTE.green) },
-      { polys: local(features.fairways), color: new THREE.Color(PALETTE.fairway) },
-    ];
+    this.regions = {
+      water: local(features.water),
+      bunkers: local(features.bunkers),
+      tees: local(features.tees),
+      greens: hole.green ? local([hole.green]) : [],
+      fairways: local(features.fairways),
+    };
 
-    // ---- scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(PALETTE.bg);
-    scene.fog = new THREE.Fog(PALETTE.bg, d * 1.1, d * 2.6);
+    scene.background = new THREE.Color(COL.bg);
+    scene.fog = new THREE.Fog(COL.bg, d * 1.2, d * 2.8);
     this.scene = scene;
 
-    scene.add(new THREE.HemisphereLight(0xdff2e0, 0x0e2418, 1.05));
-    const sun = new THREE.DirectionalLight(0xfff2d8, 1.35);
-    sun.position.set(-w, Math.max(80, d * 0.4), d * 0.4);
+    scene.add(new THREE.HemisphereLight(0xe8f5e5, 0x0e2418, 1.1));
+    const sun = new THREE.DirectionalLight(0xfff0d2, 1.2);
+    sun.position.set(-w * 0.8, Math.max(90, d * 0.35), d * 0.35);
     scene.add(sun);
 
-    scene.add(this._terrain(minX, minZ, w, d, nx, nz, heights, regions));
-    this._addPin(heights, minX, minZ, w, d);
-    this._addHoleLine(pts, heights, minX, minZ, w, d);
+    scene.add(this._terrain());
+    this._addPin();
+    this._addHoleLine();
+    this._initFlow();
     this._ball = this._addBall();
+    this._previewGroup = new THREE.Group();
+    scene.add(this._previewGroup);
 
-    // ---- camera: raised behind the tee side, looking down the hole
+    // ---- camera: damped orbit around the player's ball
+    this.camera = new THREE.PerspectiveCamera(48, 1, 1, 6000);
     const tee = toLocal(hole.tee);
-    const cam = new THREE.PerspectiveCamera(50, 1, 1, 6000);
-    this.camera = cam;
-    this.camTarget = new THREE.Vector3(
-      tee.x * 0.25, this._h(heights, 0, 0, minX, minZ, w, d), tee.z * 0.5);
+    const anchor = this.playerLocal || tee;
+    const span = Math.hypot(anchor.x, anchor.z); // ball → green
+    const fx = anchor.x * 0.68, fz = anchor.z * 0.68;
+    const anchorY = this._h(fx, fz);
     this.orbit = {
-      radius: Math.max(140, tee.z * 0.85),
-      azimuth: Math.atan2(tee.x * 0.3, tee.z),   // roughly up the hole line
-      elevation: 0.52,
+      target: new THREE.Vector3(fx, anchorY, fz),
+      targetGoal: new THREE.Vector3(fx, anchorY, fz),
+      radius: clamp(span * 1.05, 130, 620), radiusGoal: clamp(span * 1.05, 130, 620),
+      azimuth: Math.atan2(anchor.x, anchor.z), azimuthGoal: Math.atan2(anchor.x, anchor.z),
+      elevation: 0.55, elevationGoal: 0.55,
     };
     this._applyOrbit();
 
@@ -153,10 +167,10 @@ export class Hole3D {
     this.setVisible(this.visible !== false);
   }
 
-  /* ------------------------------------------------------- elevation */
+  /* ------------------------------------------------------ elevation */
 
   async _heights(getElevations, toWorld, minX, minZ, w, d) {
-    const GX = 15, GZ = 31; // 496 samples — under Google's 512/request cap
+    const GX = 15, GZ = 31; // 496 samples — under the 512/request cap
     const grid = { GX, GZ, data: null };
     if (!getElevations) return grid;
     try {
@@ -175,103 +189,169 @@ export class Hole3D {
     return grid;
   }
 
-  /** Bilinear height (m) at local x,z. */
-  _h(grid, x, z, minX, minZ, w, d) {
-    if (!grid?.data) return 0;
-    const { GX, GZ, data } = grid;
-    const fx = Math.min(GX - 1e-6, Math.max(0, ((x - minX) / w) * GX));
-    const fz = Math.min(GZ - 1e-6, Math.max(0, ((z - minZ) / d) * GZ));
+  _h(x, z) {
+    const g = this.heights;
+    if (!g?.data) return 0;
+    const { minX, minZ, w, d } = this.bounds;
+    const fx = clamp(((x - minX) / w) * g.GX, 0, g.GX - 1e-6);
+    const fz = clamp(((z - minZ) / d) * g.GZ, 0, g.GZ - 1e-6);
     const i = Math.floor(fx), j = Math.floor(fz);
     const tx = fx - i, tz = fz - j;
-    const at = (ii, jj) => data[jj * (GX + 1) + ii];
+    const at = (ii, jj) => g.data[jj * (g.GX + 1) + ii];
     return (at(i, j) * (1 - tx) + at(i + 1, j) * tx) * (1 - tz) +
            (at(i, j + 1) * (1 - tx) + at(i + 1, j + 1) * tx) * tz;
   }
 
-  /* --------------------------------------------------------- meshes */
-
-  _terrain(minX, minZ, w, d, nx, nz, heights, regions) {
-    // Non-indexed grid so every facet gets a single crisp colour.
-    const positions = [], colors = [];
-    const rough = new THREE.Color(PALETTE.rough);
-    const tmp = new THREE.Color();
-
-    const classify = (x, z) => {
-      const p = this._localPoint(x, z);
-      for (const r of regions) {
-        for (const poly of r.polys) if (inLocalPoly(p, poly)) return r;
-      }
-      return null;
+  /** Downhill unit-ish gradient (dh per meter) at local x,z. */
+  _grad(x, z) {
+    const e = 3;
+    return {
+      x: (this._h(x + e, z) - this._h(x - e, z)) / (2 * e),
+      z: (this._h(x, z + e) - this._h(x, z - e)) / (2 * e),
     };
-
-    const H = (x, z) => this._h(heights, x, z, minX, minZ, w, d);
-
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        const x0 = minX + (i / nx) * w, x1 = minX + ((i + 1) / nx) * w;
-        const z0 = minZ + (j / nz) * d, z1 = minZ + ((j + 1) / nz) * d;
-        const corners = [
-          [x0, H(x0, z0), z0], [x1, H(x1, z0), z0],
-          [x1, H(x1, z1), z1], [x0, H(x0, z1), z1],
-        ];
-        for (const tri of [[0, 2, 1], [0, 3, 2]]) {
-          const cx = (corners[tri[0]][0] + corners[tri[1]][0] + corners[tri[2]][0]) / 3;
-          const cz = (corners[tri[0]][2] + corners[tri[1]][2] + corners[tri[2]][2]) / 3;
-          const region = classify(cx, cz);
-          if (region) tmp.copy(region.color);
-          else tmp.copy(rough);
-          // mowing stripes across the hole + gentle per-facet variation
-          const stripe = Math.floor(j / 10) % 2 ? 1.035 : 0.965;
-          const v = stripe * (1 + (hash2(i, j + (tri[0] ? 7 : 0)) - 0.5) * 0.05);
-          for (const k of tri) {
-            const y = region?.flat ? Math.min(corners[k][1], H(cx, cz)) - 0.25 : corners[k][1];
-            positions.push(corners[k][0], y, corners[k][2]);
-            colors.push(tmp.r * v, tmp.g * v, tmp.b * v);
-          }
-        }
-      }
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-    return new THREE.Mesh(geo, mat);
   }
 
-  _localPoint(x, z) { return { x, z }; }
+  /* ------------------------------------------------- painted terrain */
 
-  _addPin(heights, minX, minZ, w, d) {
-    const y = this._h(heights, 0, 0, minX, minZ, w, d);
+  _terrain() {
+    const { minX, minZ, w, d } = this.bounds;
+    const nx = Math.min(MAX_CELLS, Math.max(30, Math.round(w / CELL_M)));
+    const nz = Math.min(MAX_CELLS, Math.max(30, Math.round(d / CELL_M)));
+
+    const geo = new THREE.BufferGeometry();
+    const pos = [], uv = [], idx = [];
+    for (let j = 0; j <= nz; j++) {
+      for (let i = 0; i <= nx; i++) {
+        const x = minX + (i / nx) * w, z = minZ + (j / nz) * d;
+        pos.push(x, this._h(x, z), z);
+        uv.push(i / nx, 1 - j / nz);
+      }
+    }
+    for (let j = 0; j < nz; j++) {
+      for (let i = 0; i < nx; i++) {
+        const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 1, e = c + 1;
+        idx.push(a, c, b, b, c, e);
+      }
+    }
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+
+    const tex = new THREE.CanvasTexture(this._paint());
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    return new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: tex, transparent: true }));
+  }
+
+  /** Paint the course onto a canvas — this is where the "pretty" lives. */
+  _paint() {
+    const { minX, minZ, w, d } = this.bounds;
+    const H = 2048;
+    const W = Math.min(1280, Math.max(384, Math.round(H * (w / d))));
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const X = (x) => ((x - minX) / w) * W;
+    const Y = (z) => ((z - minZ) / d) * H;
+    const path = (poly) => {
+      g.beginPath();
+      poly.forEach((p, i) => i ? g.lineTo(X(p.x), Y(p.z)) : g.moveTo(X(p.x), Y(p.z)));
+      g.closePath();
+    };
+    const soft = (color, blurPx) => {
+      g.shadowColor = color; g.shadowBlur = blurPx;
+      g.fillStyle = color; g.fill();
+      g.shadowBlur = 0;
+    };
+    const stripes = (color, phase) => {
+      g.fillStyle = color;
+      const band = H / Math.max(10, Math.round(d / 14)); // ~14 m mow bands
+      for (let y = phase * band; y < H; y += band * 2) g.fillRect(0, y, W, band);
+    };
+
+    // rough + its mowing
+    g.fillStyle = COL.rough;
+    g.fillRect(0, 0, W, H);
+    stripes(COL.roughStripe, 0);
+
+    // fairways: soft edge, brighter mow stripes clipped inside
+    for (const f of this.regions.fairways) {
+      path(f); soft(COL.fairway, 14);
+      g.save(); path(f); g.clip(); stripes(COL.fairwayStripe, 0.5); g.restore();
+    }
+    for (const t of this.regions.tees) { path(t); soft(COL.tee, 8); }
+
+    // water with a depth gradient
+    for (const wtr of this.regions.water) {
+      const grad = g.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, COL.water); grad.addColorStop(1, COL.waterDeep);
+      path(wtr);
+      g.shadowColor = COL.waterDeep; g.shadowBlur = 10;
+      g.fillStyle = grad; g.fill();
+      g.shadowBlur = 0;
+    }
+
+    // bunkers: sand with a soft lip
+    for (const b of this.regions.bunkers) {
+      path(b); soft(COL.bunker, 8);
+      path(b); g.strokeStyle = COL.bunkerEdge; g.lineWidth = 3; g.stroke();
+    }
+
+    // greens: fringe ring then bright putting surface with a subtle sheen
+    for (const gr of this.regions.greens) {
+      path(gr);
+      g.strokeStyle = COL.fringe; g.lineWidth = 16; g.stroke();
+      path(gr); soft(COL.green, 10);
+      let cx = 0, cz = 0;
+      for (const p of gr) { cx += p.x; cz += p.z; }
+      cx = X(cx / gr.length); cz = Y(cz / gr.length);
+      const sheen = g.createRadialGradient(cx, cz, 4, cx, cz, 90);
+      sheen.addColorStop(0, 'rgba(255,255,255,0.12)');
+      sheen.addColorStop(1, 'rgba(255,255,255,0)');
+      g.save(); path(gr); g.clip();
+      g.fillStyle = sheen; g.fillRect(0, 0, W, H);
+      g.restore();
+    }
+
+    // fade the rectangle edges away so the hole floats like a diorama
+    g.globalCompositeOperation = 'destination-out';
+    const feather = (x0, y0, x1, y1) => {
+      const lg = g.createLinearGradient(x0, y0, x1, y1);
+      lg.addColorStop(0, 'rgba(0,0,0,1)'); lg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = lg; g.fillRect(0, 0, W, H);
+    };
+    const fx = W * 0.06, fy = H * 0.035;
+    feather(0, 0, fx, 0); feather(W, 0, W - fx, 0);
+    feather(0, 0, 0, fy); feather(0, H, 0, H - fy);
+    g.globalCompositeOperation = 'source-over';
+    return c;
+  }
+
+  /* ----------------------------------------------- pin, line, ball */
+
+  _addPin() {
+    const y = this._h(0, 0);
     const pole = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.18, 9, 6),
-      new THREE.MeshLambertMaterial({ color: PALETTE.pole }));
+      new THREE.CylinderGeometry(0.16, 0.16, 9, 8),
+      new THREE.MeshLambertMaterial({ color: COL.pole }));
     pole.position.set(0, y + 4.5, 0);
     this.scene.add(pole);
 
     this.flag = new THREE.Mesh(
-      new THREE.PlaneGeometry(3.6, 2.2),
-      new THREE.MeshLambertMaterial({ color: PALETTE.flag, side: THREE.DoubleSide }));
-    this.flag.position.set(1.8, y + 7.8, 0);
+      new THREE.PlaneGeometry(3.4, 2.1),
+      new THREE.MeshLambertMaterial({ color: COL.flag, side: THREE.DoubleSide }));
+    this.flag.position.set(1.7, y + 7.9, 0);
     this.scene.add(this.flag);
-
-    // glow ring on the green so the pin reads from any distance
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(3.4, 4.2, 40),
-      new THREE.MeshBasicMaterial({ color: PALETTE.line, transparent: true, opacity: 0.55 }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.set(0, y + 0.25, 0);
-    this.scene.add(ring);
   }
 
-  _addHoleLine(pts, heights, minX, minZ, w, d) {
-    const v = pts.map(p => new THREE.Vector3(
-      p.x, this._h(heights, p.x, p.z, minX, minZ, w, d) + 0.6, p.z));
+  _addHoleLine() {
+    const v = this.linePts.map(p => new THREE.Vector3(p.x, this._h(p.x, p.z) + 0.5, p.z));
     const curve = new THREE.CatmullRomCurve3(v);
-    const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(80));
-    const line = new THREE.Line(geo,
-      new THREE.LineDashedMaterial({ color: PALETTE.line, dashSize: 6, gapSize: 5, transparent: true, opacity: 0.9 }));
+    const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(90));
+    const line = new THREE.Line(geo, new THREE.LineDashedMaterial({
+      color: COL.line, dashSize: 5, gapSize: 6, transparent: true, opacity: 0.45,
+    }));
     line.computeLineDistances();
     this.scene.add(line);
   }
@@ -279,21 +359,213 @@ export class Hole3D {
   _addBall() {
     const g = new THREE.Group();
     const ball = new THREE.Mesh(
-      new THREE.SphereGeometry(1.4, 18, 14),
-      new THREE.MeshLambertMaterial({ color: PALETTE.ball }));
-    ball.position.y = 1.4;
+      new THREE.SphereGeometry(1.3, 20, 16),
+      new THREE.MeshLambertMaterial({ color: COL.ball }));
+    ball.position.y = 1.3;
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(2.4, 3.1, 36),
-      new THREE.MeshBasicMaterial({ color: PALETTE.ball, transparent: true, opacity: 0.5 }));
+      new THREE.RingGeometry(2.2, 2.8, 40),
+      new THREE.MeshBasicMaterial({ color: COL.ball, transparent: true, opacity: 0.45 }));
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.2;
+    ring.position.y = 0.25;
     g.add(ball, ring);
     g.visible = false;
-    this.scene?.add(g);
+    this.scene.add(g);
     return g;
   }
 
-  /** Move the player ball (world lat/lng). */
+  /* -------------------------------------------- slope flow particles */
+
+  _initFlow() {
+    const N = FLOW_N;
+    this.flowP = new Float32Array(N * 3);
+    this.flowC = new Float32Array(N * 3);
+    this.flow = Array.from({ length: N }, () => ({ x: 0, z: 0, life: Math.random() }));
+    for (const p of this.flow) this._respawnFlow(p);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(this.flowP, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.flowC, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 1.7, sizeAttenuation: true, map: dotSprite(), vertexColors: true,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.flowPoints = new THREE.Points(geo, mat);
+    this.flowPoints.frustumCulled = false;
+    this.scene.add(this.flowPoints);
+  }
+
+  _respawnFlow(p) {
+    const { minX, minZ, w, d } = this.bounds;
+    // bias spawns to the playing corridor so the lines describe YOUR shot
+    for (let tries = 0; tries < 8; tries++) {
+      const x = minX + Math.random() * w;
+      const z = minZ + Math.random() * d;
+      if (this._nearCorridor(x, z, 55)) { p.x = x; p.z = z; break; }
+      p.x = x; p.z = z;
+    }
+    p.life = 0;
+    p.dur = 2.5 + Math.random() * 2.5;
+  }
+
+  _nearCorridor(x, z, r) {
+    if (Math.hypot(x, z) < 45) return true; // around the green
+    const pts = this.linePts;
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (segDist(x, z, pts[i], pts[i + 1]) < r) return true;
+    }
+    return false;
+  }
+
+  _updateFlow(dt) {
+    if (!this.flow) return;
+    const hasSlope = !!this.heights?.data;
+    for (let i = 0; i < this.flow.length; i++) {
+      const p = this.flow[i];
+      p.life += dt;
+      const g = hasSlope ? this._grad(p.x, p.z) : { x: 0, z: 0 };
+      const mag = Math.hypot(g.x, g.z);
+      if (p.life > p.dur || mag < 0.008) {
+        if (p.life > p.dur) this._respawnFlow(p);
+        // invisible when flat
+        this.flowC[i * 3] = this.flowC[i * 3 + 1] = this.flowC[i * 3 + 2] = 0;
+        this.flowP[i * 3 + 1] = -999;
+        if (mag < 0.008) p.life += dt * 2; // recycle flat spawns faster
+        continue;
+      }
+      const speed = clamp(mag * 90, 2.5, 14); // m/s downhill drift
+      p.x -= (g.x / mag) * speed * dt;
+      p.z -= (g.z / mag) * speed * dt;
+      const fade = Math.sin(Math.min(1, p.life / p.dur) * Math.PI);
+      const a = fade * clamp(mag * 14, 0.12, 0.85);
+      this.flowP[i * 3] = p.x;
+      this.flowP[i * 3 + 1] = this._h(p.x, p.z) + 0.7;
+      this.flowP[i * 3 + 2] = p.z;
+      this.flowC[i * 3] = COL.flow.r * a;
+      this.flowC[i * 3 + 1] = COL.flow.g * a;
+      this.flowC[i * 3 + 2] = COL.flow.b * a;
+    }
+    this.flowPoints.geometry.attributes.position.needsUpdate = true;
+    this.flowPoints.geometry.attributes.color.needsUpdate = true;
+  }
+
+  /* ------------------------------------------------- shot preview */
+
+  /**
+   * Landing ring + simulated roll-out for the recommended club.
+   * Returns { kick:'left'|'right'|'none', endRegion, hasSlope } (also kept
+   * as this.lastPrediction for the voice caddie).
+   */
+  setShotPreview({ carryM, spreadM, rollM }) {
+    if (!this.scene || !this.playerLocal || !this.hole) return null;
+    const ball = this.playerLocal;
+    const key = `${Math.round(carryM / 3)}|${Math.round(ball.x / 4)}|${Math.round(ball.z / 4)}|${Math.round(rollM)}`;
+    if (key === this._previewKey) return this.lastPrediction;
+    this._previewKey = key;
+
+    this._previewGroup.clear();
+
+    // aim at the green from the ball; pitch point at carry distance
+    const span = Math.hypot(ball.x, ball.z);
+    if (span < 15) { this.lastPrediction = null; return null; } // on the green
+    const dir = { x: -ball.x / span, z: -ball.z / span };
+    const carry = Math.min(carryM, span + 30); // don't preview 80 yds past the pin
+    const pitch = { x: ball.x + dir.x * carry, z: ball.z + dir.z * carry };
+    const py = this._h(pitch.x, pitch.z);
+
+    // landing ring sized by your consistency with the club
+    const r = clamp(spreadM, 8, 40);
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(r * 0.86, r, 48),
+      new THREE.MeshBasicMaterial({
+        color: COL.line, transparent: true, opacity: 0.85,
+        depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+      }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(pitch.x, py + 0.6, pitch.z);
+    ring.renderOrder = 10; // transparent terrain must not paint over the preview
+    this._previewRing = ring;
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(r * 0.86, 48),
+      new THREE.MeshBasicMaterial({
+        color: COL.line, transparent: true, opacity: 0.12,
+        depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+      }));
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.set(pitch.x, py + 0.5, pitch.z);
+    disc.renderOrder = 9;
+    this._previewGroup.add(ring, disc);
+
+    // roll-out: friction + slope, curving where the ground kicks
+    const path = this._simulateRoll(pitch, dir, rollM);
+    const end = path[path.length - 1];
+    const endRegion = this._classify(end.x, end.z);
+    const lineColor = endRegion === 'green' ? COL.rollGood
+      : (endRegion === 'bunker' || endRegion === 'water') ? COL.rollBad
+      : COL.rollNeutral;
+
+    if (path.length > 1) {
+      const pts = path.map(p => new THREE.Vector3(p.x, this._h(p.x, p.z) + 0.6, p.z));
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(pts),
+        new THREE.LineBasicMaterial({
+          color: lineColor, transparent: true, opacity: 0.95, depthTest: false,
+        }));
+      line.renderOrder = 11;
+      this._previewGroup.add(line);
+    }
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(1.1, 14, 10),
+      new THREE.MeshBasicMaterial({ color: lineColor }));
+    dot.position.set(end.x, this._h(end.x, end.z) + 1, end.z);
+    dot.renderOrder = 11;
+    this._previewGroup.add(dot);
+
+    // which way did the slope take it?
+    const right = { x: -dir.z, z: dir.x };
+    const lateral = (end.x - pitch.x) * right.x + (end.z - pitch.z) * right.z;
+    const kick = Math.abs(lateral) < 4 ? 'none' : (lateral > 0 ? 'right' : 'left');
+
+    this.lastPrediction = { kick, endRegion, hasSlope: !!this.heights?.data };
+    return this.lastPrediction;
+  }
+
+  _simulateRoll(start, dir, rollM) {
+    const mu = 2.2, dt = 0.12;
+    let v = { x: dir.x, z: dir.z };
+    const v0 = Math.sqrt(2 * mu * Math.max(1, rollM));
+    v.x *= v0; v.z *= v0;
+    const path = [{ ...start }];
+    let p = { ...start };
+    let travelled = 0;
+    for (let i = 0; i < 160; i++) {
+      const g = this._grad(p.x, p.z);
+      const speed = Math.hypot(v.x, v.z);
+      if (speed < 0.4) break;
+      v.x += (-9.8 * g.x - mu * (v.x / speed)) * dt;
+      v.z += (-9.8 * g.z - mu * (v.z / speed)) * dt;
+      p = { x: p.x + v.x * dt, z: p.z + v.z * dt };
+      travelled += Math.hypot(v.x, v.z) * dt;
+      path.push({ ...p });
+      if (travelled > rollM * 3 + 45) break; // runaway slope guard
+      if (this._classify(p.x, p.z) === 'water') break; // splash — stop there
+    }
+    return path;
+  }
+
+  _classify(x, z) {
+    const pt = { x, z };
+    const order = [
+      ['water', this.regions.water], ['bunker', this.regions.bunkers],
+      ['green', this.regions.greens], ['fairway', this.regions.fairways],
+    ];
+    for (const [name, polys] of order) {
+      for (const poly of polys) if (inLocalPoly(pt, poly)) return name;
+    }
+    return 'rough';
+  }
+
+  /* ---------------------------------------------------- player */
+
   updatePlayer(pos) {
     if (!this.frame) { this.playerLocal = null; return; }
     this.updatePlayerLocal(this.frame.toLocal(pos));
@@ -302,69 +574,97 @@ export class Hole3D {
   updatePlayerLocal(p) {
     this.playerLocal = p;
     if (!this._ball || !this.scene) return;
-    if (!this._ball.parent) this.scene.add(this._ball);
     this._ball.visible = true;
-    const y = this._hm
-      ? this._h(this._hm.heights, p.x, p.z, this._hm.minX, this._hm.minZ, this._hm.w, this._hm.d)
-      : 0;
-    this._ball.position.set(p.x, y, p.z);
+    this._ball.position.set(p.x, this._h(p.x, p.z), p.z);
+    // frame the action: focus a third of the way from the ball to the green
+    if (this.orbit) {
+      const fx = p.x * 0.68, fz = p.z * 0.68;
+      this.orbit.targetGoal.set(fx, this._h(fx, fz), fz);
+    }
   }
 
-  /* --------------------------------------------------- camera + loop */
+  /* ------------------------------------------- damped orbit camera */
 
   _applyOrbit() {
-    const { radius, azimuth, elevation } = this.orbit;
-    const t = this.camTarget;
+    const o = this.orbit;
     this.camera.position.set(
-      t.x + radius * Math.cos(elevation) * Math.sin(azimuth),
-      t.y + radius * Math.sin(elevation),
-      t.z + radius * Math.cos(elevation) * Math.cos(azimuth));
-    this.camera.lookAt(t);
+      o.target.x + o.radius * Math.cos(o.elevation) * Math.sin(o.azimuth),
+      o.target.y + o.radius * Math.sin(o.elevation),
+      o.target.z + o.radius * Math.cos(o.elevation) * Math.cos(o.azimuth));
+    this.camera.lookAt(o.target);
+  }
+
+  _dampOrbit(dt) {
+    const o = this.orbit;
+    if (!o) return;
+    const k = 1 - Math.exp(-dt * 8); // smooth, frame-rate independent
+    o.azimuth += (o.azimuthGoal - o.azimuth) * k;
+    o.elevation += (o.elevationGoal - o.elevation) * k;
+    o.radius += (o.radiusGoal - o.radius) * k;
+    o.target.lerp(o.targetGoal, k * 0.6);
+    this._applyOrbit();
   }
 
   _bindControls() {
     const el = this.renderer.domElement;
-    let drag = null, pinch = null;
+    const pointers = new Map();
+    let pinchDist = 0;
+
     el.addEventListener('pointerdown', (e) => {
-      drag = { x: e.clientX, y: e.clientY };
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       el.setPointerCapture(e.pointerId);
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+      }
     });
     el.addEventListener('pointermove', (e) => {
-      if (!drag || !this.orbit) return;
-      this.orbit.azimuth -= (e.clientX - drag.x) * 0.005;
-      this.orbit.elevation = Math.min(1.35, Math.max(0.15,
-        this.orbit.elevation + (e.clientY - drag.y) * 0.004));
-      drag = { x: e.clientX, y: e.clientY };
-      this._applyOrbit();
+      const prev = pointers.get(e.pointerId);
+      if (!prev || !this.orbit) return;
+      if (pointers.size === 1) {
+        this.orbit.azimuthGoal -= (e.clientX - prev.x) * 0.006;
+        this.orbit.elevationGoal = clamp(
+          this.orbit.elevationGoal + (e.clientY - prev.y) * 0.005, 0.18, 1.35);
+      }
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()];
+        const nd = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinchDist > 0) {
+          this.orbit.radiusGoal = clamp(this.orbit.radiusGoal * pinchDist / nd, 60, 2000);
+        }
+        pinchDist = nd;
+      }
     });
-    el.addEventListener('pointerup', () => { drag = null; });
+    const drop = (e) => { pointers.delete(e.pointerId); pinchDist = 0; };
+    el.addEventListener('pointerup', drop);
+    el.addEventListener('pointercancel', drop);
     el.addEventListener('wheel', (e) => {
       if (!this.orbit) return;
       e.preventDefault();
-      this.orbit.radius = Math.min(2200, Math.max(60, this.orbit.radius * (1 + e.deltaY * 0.001)));
-      this._applyOrbit();
+      this.orbit.radiusGoal = clamp(this.orbit.radiusGoal * (1 + e.deltaY * 0.001), 60, 2000);
     }, { passive: false });
-    el.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 2) pinch = touchDist(e);
-    }, { passive: true });
-    el.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 2 && pinch && this.orbit) {
-        const nd = touchDist(e);
-        this.orbit.radius = Math.min(2200, Math.max(60, this.orbit.radius * pinch / nd));
-        pinch = nd;
-        this._applyOrbit();
-      }
-    }, { passive: true });
   }
+
+  /* ------------------------------------------------------- loop */
 
   setVisible(v) {
     this.visible = v;
     if (v && !this.running && this.renderer && this.scene) {
       this.running = true;
+      let last = performance.now();
       const loop = (t) => {
         if (!this.running) return;
         requestAnimationFrame(loop);
+        const dt = Math.min(0.05, (t - last) / 1000);
+        last = t;
+        this._dampOrbit(dt);
+        this._updateFlow(dt);
         if (this.flag) this.flag.rotation.y = Math.sin(t / 900) * 0.35;
+        if (this._previewRing) {
+          const s = 1 + Math.sin(t / 450) * 0.05; // gentle breathing pulse
+          this._previewRing.scale.set(s, s, 1);
+        }
         this.renderer.render(this.scene, this.camera);
       };
       requestAnimationFrame(loop);
@@ -402,13 +702,28 @@ function inLocalPoly(pt, poly) {
   return inside;
 }
 
-function hash2(i, j) {
-  const s = Math.sin(i * 127.1 + j * 311.7) * 43758.5453;
-  return s - Math.floor(s);
+function segDist(x, z, a, b) {
+  const dx = b.x - a.x, dz = b.z - a.z;
+  const len2 = dx * dx + dz * dz;
+  let t = len2 ? ((x - a.x) * dx + (z - a.z) * dz) / len2 : 0;
+  t = clamp(t, 0, 1);
+  return Math.hypot(x - (a.x + t * dx), z - (a.z + t * dz));
 }
 
-function touchDist(e) {
-  const dx = e.touches[0].clientX - e.touches[1].clientX;
-  const dy = e.touches[0].clientY - e.touches[1].clientY;
-  return Math.hypot(dx, dy);
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+let _dot = null;
+function dotSprite() {
+  if (_dot) return _dot;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 30);
+  r.addColorStop(0, 'rgba(255,255,255,1)');
+  r.addColorStop(0.45, 'rgba(255,255,255,0.55)');
+  r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r;
+  g.fillRect(0, 0, 64, 64);
+  _dot = new THREE.CanvasTexture(c);
+  return _dot;
 }

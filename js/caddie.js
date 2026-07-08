@@ -37,6 +37,15 @@ export const CLUBS = [
 const BY_ID = new Map(CLUBS.map(c => [c.id, c]));
 export function club(id) { return BY_ID.get(id); }
 
+/** Typical roll-out after pitching (yards) — lower loft runs further. */
+const ROLL_YD = {
+  DR: 30, '3W': 26, '5W': 24, '7W': 22,
+  '2H': 22, '3H': 20, '4H': 18, '5H': 16,
+  '2I': 20, '3I': 18, '4I': 16, '5I': 13, '6I': 11, '7I': 9, '8I': 7, '9I': 5,
+  PW: 4, GW: 3, SW: 2, LW: 2, PT: 0,
+};
+export function rollFor(id) { return ydToM(ROLL_YD[id] ?? 8); }
+
 /** Parse a spoken phrase into a club id (or null). */
 export function parseClub(phrase) {
   const p = ' ' + phrase.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
