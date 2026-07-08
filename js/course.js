@@ -75,16 +75,28 @@ export async function loadCourseData(pos) {
   way["golf"="bunker"](around:${r},${pos.lat},${pos.lng});
   way["natural"="water"](around:${r},${pos.lat},${pos.lng});
   way["golf"="water_hazard"](around:${r},${pos.lat},${pos.lng});
+  way["golf"="rough"](around:${r},${pos.lat},${pos.lng});
+  way["natural"="scrub"](around:${r},${pos.lat},${pos.lng});
+  way["natural"="wood"](around:${r},${pos.lat},${pos.lng});
+  way["landuse"="forest"](around:${r},${pos.lat},${pos.lng});
+  node["natural"="tree"](around:${r},${pos.lat},${pos.lng});
 );
 out geom;`;
   const data = await overpass(q);
 
-  const features = { holes: [], greens: [], tees: [], fairways: [], bunkers: [], water: [] };
+  const features = {
+    holes: [], greens: [], tees: [], fairways: [], bunkers: [], water: [],
+    roughs: [], woods: [], trees: [],
+  };
   for (const el of data.elements || []) {
+    const t = el.tags || {};
+    if (el.type === 'node') {
+      if (t.natural === 'tree' && el.lat) features.trees.push({ lat: el.lat, lng: el.lon });
+      continue;
+    }
     if (el.type !== 'way') continue;
     const pts = wayGeom(el);
     if (pts.length < 2) continue;
-    const t = el.tags || {};
     if (t.golf === 'hole') {
       features.holes.push({
         num: parseInt(t.ref, 10) || 0,
@@ -96,6 +108,8 @@ out geom;`;
     else if (t.golf === 'tee') features.tees.push(pts);
     else if (t.golf === 'fairway') features.fairways.push(pts);
     else if (t.golf === 'bunker') features.bunkers.push(pts);
+    else if (t.golf === 'rough' || t.natural === 'scrub') features.roughs.push(pts);
+    else if (t.natural === 'wood' || t.landuse === 'forest') features.woods.push(pts);
     else features.water.push(pts);
   }
 
@@ -128,7 +142,7 @@ out geom;`;
 
 /* ---------------------------------------------------------------- cache */
 
-const CACHE_KEY = 'gb.coursecache.v1';
+const CACHE_KEY = 'gb.coursecache.v2'; // v2: rough, woods and tree data added
 const CACHE_MAX_AGE_MS = 45 * 24 * 3600 * 1000; // courses don't move often
 const CACHE_MAX_ENTRIES = 5;
 

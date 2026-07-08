@@ -92,6 +92,8 @@ export class HoleView {
       ctx.fill();
     };
 
+    for (const rg of features.roughs || []) drawPoly(rg, '#1d4a2b');
+    for (const wd of features.woods || []) drawPoly(wd, '#123420');
     for (const f of features.fairways) drawPoly(f, COLORS.fairway);
     for (const t of features.tees) drawPoly(t, COLORS.tee);
     for (const wtr of features.water) drawPoly(wtr, COLORS.water);

@@ -21,6 +21,10 @@ const COL = {
   bg: 0x0d1d15,
   rough: '#20502f',
   roughStripe: 'rgba(0,0,0,0.05)',
+  semiRough: '#2a6039',
+  woodsFloor: '#173d22',
+  trunk: 0x5c4632,
+  canopy: 0x2c6b3c,
   fairway: '#3f8f52',
   fairwayStripe: 'rgba(255,255,255,0.045)',
   green: '#5fc474',
@@ -100,25 +104,16 @@ export class Hole3D {
 
   /* --------------------------------------------------------- build */
 
-  async show(hole, features, getElevations) {
+  async show(hole, features, getElevations, opts = {}) {
     if (!this.renderer) return;
+    this.showTrees = opts.trees !== false;
     this.hole = hole;
     this.frame = this._frame(hole);
     this._previewKey = '';
     const { toLocal, toWorld } = this.frame;
 
     const linePts = hole.line.map(toLocal);
-    let minX = -MARGIN_M, maxX = MARGIN_M, minZ = -MARGIN_M - 20, maxZ = MARGIN_M;
-    for (const p of linePts) {
-      minX = Math.min(minX, p.x - MARGIN_M); maxX = Math.max(maxX, p.x + MARGIN_M);
-      minZ = Math.min(minZ, p.z - MARGIN_M); maxZ = Math.max(maxZ, p.z + MARGIN_M);
-    }
-    const w = maxX - minX, d = maxZ - minZ;
-    this.bounds = { minX, minZ, w, d };
     this.linePts = linePts;
-
-    const heights = await this._heights(getElevations, toWorld, minX, minZ, w, d);
-    this.heights = heights;
 
     // region polygons in local coords (near this hole only)
     const near = (poly) => poly.some(p =>
@@ -130,7 +125,50 @@ export class Hole3D {
       tees: local(features.tees),
       greens: hole.green ? local([hole.green]) : [],
       fairways: local(features.fairways),
+      roughs: local(features.roughs || []),
+      woods: local(features.woods || []),
+      trees: (features.trees || [])
+        .filter(p => dist(p, hole.greenCenter) < 900 || dist(p, hole.tee) < 900)
+        .map(toLocal),
     };
+
+    // ---- terrain extent: the hole corridor, then grown to fully cover any
+    // fairway/green/bunker the hole plays over (St Andrews-style shared
+    // fairways are far wider than the centreline strip), capped for sanity
+    let minX = -MARGIN_M, maxX = MARGIN_M, minZ = -MARGIN_M - 20, maxZ = MARGIN_M;
+    for (const p of linePts) {
+      minX = Math.min(minX, p.x - MARGIN_M); maxX = Math.max(maxX, p.x + MARGIN_M);
+      minZ = Math.min(minZ, p.z - MARGIN_M); maxZ = Math.max(maxZ, p.z + MARGIN_M);
+    }
+    const lineNear = (p, r) => {
+      for (let i = 0; i < linePts.length - 1; i++) {
+        if (segDist(p.x, p.z, linePts[i], linePts[i + 1]) < r) return true;
+      }
+      return Math.hypot(p.x, p.z) < r;
+    };
+    for (const key of ['fairways', 'greens', 'bunkers', 'tees']) {
+      for (const poly of this.regions[key]) {
+        if (!poly.some(p => lineNear(p, 80))) continue; // not this hole's feature
+        for (const p of poly) {
+          minX = Math.min(minX, p.x - 25); maxX = Math.max(maxX, p.x + 25);
+          minZ = Math.min(minZ, p.z - 25); maxZ = Math.max(maxZ, p.z + 25);
+        }
+      }
+    }
+    // caps relative to the hole line so one giant shared polygon can't explode the scene
+    let lMinX = Infinity, lMaxX = -Infinity, lMinZ = Infinity, lMaxZ = -Infinity;
+    for (const p of linePts) {
+      lMinX = Math.min(lMinX, p.x); lMaxX = Math.max(lMaxX, p.x);
+      lMinZ = Math.min(lMinZ, p.z); lMaxZ = Math.max(lMaxZ, p.z);
+    }
+    minX = Math.max(minX, lMinX - 220); maxX = Math.min(maxX, lMaxX + 220);
+    minZ = Math.max(minZ, lMinZ - 160); maxZ = Math.min(maxZ, lMaxZ + 120);
+
+    const w = maxX - minX, d = maxZ - minZ;
+    this.bounds = { minX, minZ, w, d };
+
+    const heights = await this._heights(getElevations, toWorld, minX, minZ, w, d);
+    this.heights = heights;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COL.bg);
@@ -145,6 +183,7 @@ export class Hole3D {
     scene.add(this._terrain());
     this._addPin();
     this._addHoleLine();
+    if (this.showTrees !== false) this._addTrees();
     this._initFlow();
     this._ball = this._addBall();
     this._previewGroup = new THREE.Group();
@@ -186,7 +225,8 @@ export class Hole3D {
           latlngs.push(toWorld(minX + (i / GX) * w, minZ + (j / GZ) * d));
         }
       }
-      const elev = await getElevations(latlngs);
+      const boundsTag = `${Math.round(minX)},${Math.round(minZ)},${Math.round(w)},${Math.round(d)}`;
+      const elev = await getElevations(latlngs, boundsTag);
       if (elev && elev.length === latlngs.length) {
         const min = Math.min(...elev);
         grid.data = elev.map(e => e - min);
@@ -281,6 +321,10 @@ export class Hole3D {
     g.fillRect(0, 0, W, H);
     stripes(COL.roughStripe, 0);
 
+    // mapped semi-rough / gorse patches, then woodland floor under the trees
+    for (const rg of this.regions.roughs) { path(rg); soft(COL.semiRough, 12); }
+    for (const wd of this.regions.woods) { path(wd); soft(COL.woodsFloor, 12); }
+
     // fairways: soft edge, brighter mow stripes clipped inside
     for (const f of this.regions.fairways) {
       path(f); soft(COL.fairway, 14);
@@ -327,7 +371,7 @@ export class Hole3D {
       lg.addColorStop(0, 'rgba(0,0,0,1)'); lg.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = lg; g.fillRect(0, 0, W, H);
     };
-    const fx = W * 0.06, fy = H * 0.035;
+    const fx = W * 0.04, fy = H * 0.03;
     feather(0, 0, fx, 0); feather(W, 0, W - fx, 0);
     feather(0, 0, 0, fy); feather(0, H, 0, H - fy);
     g.globalCompositeOperation = 'source-over';
@@ -377,6 +421,68 @@ export class Hole3D {
     g.visible = false;
     this.scene.add(g);
     return g;
+  }
+
+  /* ------------------------------------------------- low-poly trees */
+
+  _addTrees() {
+    const b = this.bounds;
+    const inB = (x, z) =>
+      x > b.minX + 4 && x < b.minX + b.w - 4 && z > b.minZ + 4 && z < b.minZ + b.d - 4;
+    const spots = [];
+
+    // individually mapped trees
+    for (const p of this.regions.trees) {
+      if (inB(p.x, p.z)) spots.push({ x: p.x, z: p.z });
+    }
+    // fill mapped woods with a loose scatter
+    for (const poly of this.regions.woods) {
+      let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, area = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], c = poly[(i + 1) % poly.length];
+        area += a.x * c.z - c.x * a.z;
+        x0 = Math.min(x0, a.x); x1 = Math.max(x1, a.x);
+        z0 = Math.min(z0, a.z); z1 = Math.max(z1, a.z);
+      }
+      const n = clamp(Math.round(Math.abs(area / 2) / 140), 3, 90);
+      for (let i = 0; i < n * 4 && spots.length < 240; i++) {
+        const x = x0 + Math.random() * (x1 - x0);
+        const z = z0 + Math.random() * (z1 - z0);
+        if (inLocalPoly({ x, z }, poly) && inB(x, z)) spots.push({ x, z });
+      }
+    }
+    if (!spots.length) return;
+
+    const trunkGeo = new THREE.CylinderGeometry(0.35, 0.5, 4, 5);
+    const canopyGeo = new THREE.IcosahedronGeometry(3, 0);
+    const trunks = new THREE.InstancedMesh(
+      trunkGeo, new THREE.MeshLambertMaterial({ color: COL.trunk }), spots.length);
+    const canopies = new THREE.InstancedMesh(
+      canopyGeo, new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), spots.length);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const col = new THREE.Color();
+    const base = new THREE.Color(COL.canopy);
+    for (let i = 0; i < spots.length; i++) {
+      const { x, z } = spots[i];
+      const y = this._h(x, z);
+      const s = 0.7 + Math.random() * 0.9;
+      q.setFromAxisAngle(up, Math.random() * Math.PI * 2);
+      m.compose(new THREE.Vector3(x, y + 2 * s, z), q, new THREE.Vector3(s, s, s));
+      trunks.setMatrixAt(i, m);
+      m.compose(
+        new THREE.Vector3(x, y + (4 + 2.2) * s, z), q,
+        new THREE.Vector3(s * (0.9 + Math.random() * 0.4), s * (1 + Math.random() * 0.5), s * (0.9 + Math.random() * 0.4)));
+      canopies.setMatrixAt(i, m);
+      col.copy(base).offsetHSL((Math.random() - 0.5) * 0.03, 0, (Math.random() - 0.5) * 0.06);
+      canopies.setColorAt(i, col);
+    }
+    trunks.instanceMatrix.needsUpdate = true;
+    canopies.instanceMatrix.needsUpdate = true;
+    if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+    this.scene.add(trunks, canopies);
   }
 
   /* -------------------------------------------- slope flow particles */
@@ -695,12 +801,17 @@ export class Hole3D {
       } else if (pointers.size === 2) {
         grab = null;
         const [a, b] = [...pointers.values()];
+        const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
         pinch = {
           dist: Math.hypot(a.x - b.x, a.y - b.y),
           angle: Math.atan2(b.y - a.y, b.x - a.x),
-          midX: (a.x + b.x) / 2,
-          midY: (a.y + b.y) / 2,
+          midX, midY,
+          startDist: Math.hypot(a.x - b.x, a.y - b.y),
+          startAngle: Math.atan2(b.y - a.y, b.x - a.x),
+          startMidX: midX, startMidY: midY,
+          mode: null, accum: 0,
         };
+        this._grabMid = this._groundPoint(midX, midY);
       }
     });
 
@@ -732,37 +843,60 @@ export class Hole3D {
         const midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
         interact();
 
-        // ZOOM toward the pinch midpoint
-        if (pinch.dist > 0 && dist > 0) {
-          const scale = clamp(pinch.dist / dist, 0.8, 1.25);
+        const dMidY = midY - pinch.midY;
+        pinch.accum += Math.abs(midX - pinch.midX) + Math.abs(dMidY) + Math.abs(dist - pinch.dist);
+
+        // decide once per gesture: parallel vertical slide = TILT,
+        // anything else = pan/zoom/rotate around the fingers
+        if (!pinch.mode && pinch.accum > 14) {
+          const scaleChange = Math.abs(dist - pinch.startDist) / Math.max(1, pinch.startDist);
+          let twist = angle - pinch.startAngle;
+          if (twist > Math.PI) twist -= 2 * Math.PI;
+          if (twist < -Math.PI) twist += 2 * Math.PI;
+          const dX0 = midX - pinch.startMidX, dY0 = midY - pinch.startMidY;
+          pinch.mode = (Math.abs(dY0) > 1.5 * Math.abs(dX0) &&
+                        scaleChange < 0.06 && Math.abs(twist) < 0.1)
+            ? 'tilt' : 'manip';
+        }
+
+        if (pinch.mode === 'tilt') {
+          o.elevation = clamp(o.elevation + dMidY * 0.006, 0.18, 1.45);
+          o.elevationGoal = o.elevation;
+          this._applyOrbit();
+        } else if (pinch.mode === 'manip') {
+          // zoom + rotate…
+          if (pinch.dist > 0 && dist > 0) {
+            o.radius = clamp(o.radius * (pinch.dist / dist), 50, 2000);
+            o.radiusGoal = o.radius;
+          }
+          let dA = angle - pinch.angle;
+          if (dA > Math.PI) dA -= 2 * Math.PI;
+          if (dA < -Math.PI) dA += 2 * Math.PI;
+          o.azimuth -= dA;
+          o.azimuthGoal = o.azimuth;
+          this._applyOrbit();
+          // …then keep the ground grabbed at gesture start pinned under the
+          // fingers' midpoint — this one constraint gives Google-Maps-style
+          // simultaneous two-finger pan, pinch-to-point and rotate-about-point
           const gp = this._groundPoint(midX, midY);
-          o.radius = clamp(o.radius * scale, 50, 2000);
-          o.radiusGoal = o.radius;
-          if (gp) {
-            // keep the world point under the fingers fixed while zooming
-            o.target.lerpVectors(gp, o.target, scale);
+          if (gp && this._grabMid) {
+            const dl = this._grabMid.clone().sub(gp);
+            dl.y = 0;
+            o.target.add(dl);
             o.targetGoal.copy(o.target);
             this._clampTarget();
+            this._applyOrbit();
           }
         }
-        // TWIST rotates
-        let dA = angle - pinch.angle;
-        if (dA > Math.PI) dA -= 2 * Math.PI;
-        if (dA < -Math.PI) dA += 2 * Math.PI;
-        o.azimuth -= dA;
-        o.azimuthGoal = o.azimuth;
-        // two-finger vertical drag TILTS
-        o.elevation = clamp(o.elevation + (midY - pinch.midY) * 0.006, 0.18, 1.45);
-        o.elevationGoal = o.elevation;
 
-        pinch = { dist, angle, midX, midY };
-        this._applyOrbit();
+        pinch.dist = dist; pinch.angle = angle;
+        pinch.midX = midX; pinch.midY = midY;
       }
     });
 
     const drop = (e) => {
       pointers.delete(e.pointerId);
-      if (pointers.size < 2) pinch = null;
+      if (pointers.size < 2) { pinch = null; this._grabMid = null; }
       if (pointers.size === 1) {
         // pinch ended with one finger down — re-grab for panning
         const p = [...pointers.values()][0];

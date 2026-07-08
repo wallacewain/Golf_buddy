@@ -30,7 +30,6 @@ const state = {
   pendingShot: null,    // last shot waiting for its landing position
   lastShotAt: 0,
   view: 'map',          // 'map' | 'hole'
-  userToggledView: false, // don't auto-switch views after a manual toggle
   dimmed: false,        // battery saver: black screen, still listening
   demo: false,
 };
@@ -117,7 +116,6 @@ let activeGps = gps;
 
 async function startRound(demo = false) {
   state.demo = demo;
-  state.userToggledView = false;
   activeGps = demo ? new DemoGPS() : gps;
 
   $('#start-screen').classList.add('hidden');
@@ -173,16 +171,15 @@ async function startRound(demo = false) {
       hole3d.onFollowChange = (following) =>
         $('#btn-recenter').classList.toggle('hidden', following || state.view !== 'hole');
     }
-    setView('hole');
-    mapReady.then(async (ok) => {
+    setView('hole'); // the stylised hole is home — Google view only by choice
+    mapReady.then((ok) => {
       if (!ok) return;
-      // Google is up: re-render the stylised hole with real elevation data
+      // Google is up: re-render the stylised hole with real elevation data,
+      // and quietly prep the satellite view for whenever it's toggled
       if (state.hole) {
         showStylisedHole(state.hole);
         courseMap.showHole(state.hole, activeGps.position);
       }
-      await courseMap.whenSteady(12000); // let the 3D tiles settle first
-      if (!state.userToggledView) setView('map');
     }).catch(() => {});
 
     // Start on the nearest hole (or #1)
@@ -340,7 +337,8 @@ function updateDimReadout() {
 function showStylisedHole(hole) {
   if (!hole3d || !hole || !state.course) return;
   hole3d.show(hole, state.course.features,
-    (latlngs) => getGoogleElevations(latlngs, `${state.course.key}/${hole.num}`))
+    (latlngs, tag) => getGoogleElevations(latlngs, `${state.course.key}/${hole.num}/${tag || ''}`),
+    { trees: state.settings.trees !== false })
     .then(() => {
       if (activeGps.position) hole3d?.updatePlayer(activeGps.position);
       updateGlance(); // scene is ready now — draw the landing preview
@@ -416,7 +414,7 @@ function setView(v) {
   $('#map').classList.toggle('hidden', v !== 'map');
   $('#hole3d').classList.toggle('hidden', v !== 'hole' || !use3d);
   $('#holecanvas').classList.toggle('hidden', v !== 'hole' || use3d);
-  $('#btn-view').textContent = v === 'map' ? 'Hole View' : '3D View';
+  $('#btn-view').textContent = v === 'map' ? 'Hole View' : 'Satellite';
   hole3d?.setVisible(v === 'hole');
   if (v === 'hole') hole3d?.resize();
   $('#btn-recenter').classList.toggle('hidden',
@@ -701,6 +699,7 @@ function openSettings() {
   $('#set-units').value = s.units;
   $('#set-voice').checked = s.voice;
   $('#set-listen').checked = s.listen;
+  $('#set-trees').checked = s.trees !== false;
   $('#set-sensitivity').value = s.sensitivity;
   $('#settings-sheet').classList.remove('hidden');
 }
@@ -711,11 +710,13 @@ function saveSettings() {
     units: $('#set-units').value,
     voice: $('#set-voice').checked,
     listen: $('#set-listen').checked,
+    trees: $('#set-trees').checked,
     sensitivity: $('#set-sensitivity').value,
   };
   store.saveSettings(state.settings);
   voice = new Voice(state.settings);
   $('#settings-sheet').classList.add('hidden');
+  if (state.hole) showStylisedHole(state.hole); // apply tree toggle live
   toast('Settings saved');
 }
 
@@ -750,10 +751,7 @@ function boot() {
   $('#btn-note').onclick = openNote;
   $('#note-save').onclick = saveNote;
   $('#note-close').onclick = () => $('#note-sheet').classList.add('hidden');
-  $('#btn-view').onclick = () => {
-    state.userToggledView = true;
-    setView(state.view === 'map' ? 'hole' : 'map');
-  };
+  $('#btn-view').onclick = () => setView(state.view === 'map' ? 'hole' : 'map');
   window.addEventListener('resize', () => { drawHoleView(); hole3d?.resize(); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

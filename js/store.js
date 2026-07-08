@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
   units: 'yd',          // 'yd' | 'm'
   voice: true,          // speak announcements
   listen: true,         // mic shot detection
+  trees: true,          // 3D trees in the hole view
   sensitivity: 'normal' // 'low' | 'normal' | 'high'
 };
 
