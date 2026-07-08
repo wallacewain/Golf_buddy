@@ -9,48 +9,56 @@
 import { dist, centroid, distToLine } from './geo.js';
 
 const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.osm.jp/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
 ];
 
-// A busy public server can hang for ages — give each one 12 s, then fail
+// A busy public server can hang for ages — give each one 9 s, then fail
 // over to the next mirror instead of stalling the whole round start.
-const ENDPOINT_TIMEOUT_MS = 12000;
+const ENDPOINT_TIMEOUT_MS = 9000;
 
-async function overpass(query) {
+async function overpass(query, onStatus) {
   let lastErr;
-  for (const url of OVERPASS_ENDPOINTS) {
+  for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+    onStatus?.(i === 0 ? 'Looking up the course…' : `Trying map server ${i + 1} of ${OVERPASS_ENDPOINTS.length}…`);
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), ENDPOINT_TIMEOUT_MS);
     try {
-      const res = await fetch(url, {
+      const res = await fetch(OVERPASS_ENDPOINTS[i], {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
         signal: ctl.signal,
       });
-      if (!res.ok) throw new Error(`Overpass ${res.status}`);
+      if (!res.ok) throw new Error(`map server replied ${res.status}`);
       return await res.json();
     } catch (e) { lastErr = e; }
     finally { clearTimeout(timer); }
   }
-  throw lastErr || new Error('Overpass unreachable');
+  throw lastErr || new Error('map servers unreachable');
 }
 
 function wayGeom(el) {
   return (el.geometry || []).map(g => ({ lat: g.lat, lng: g.lon }));
 }
 
+export function emptyFeatures() {
+  return {
+    holes: [], greens: [], tees: [], fairways: [], bunkers: [], water: [],
+    roughs: [], woods: [], trees: [], beaches: [], boundaries: [],
+  };
+}
+
 /** Find the golf course nearest the player (within ~2.5 km). */
-export async function findCourse(pos) {
+export async function findCourse(pos, onStatus) {
   const q = `[out:json][timeout:25];
 (
   way["leisure"="golf_course"](around:2500,${pos.lat},${pos.lng});
   relation["leisure"="golf_course"](around:2500,${pos.lat},${pos.lng});
 );
 out tags center;`;
-  const data = await overpass(q);
+  const data = await overpass(q, onStatus);
   const courses = (data.elements || [])
     .filter(el => el.center)
     .map(el => ({
@@ -67,7 +75,7 @@ out tags center;`;
  *  Two queries in parallel: the core golf data the round depends on, and a
  *  context query (trees, beach, rough, boundary — big and non-essential)
  *  that is allowed to fail or dawdle without blocking the round start. */
-export async function loadCourseData(pos) {
+export async function loadCourseData(pos, onStatus) {
   const r = 3000, rc = 2200;
   const coreQ = `[out:json][timeout:30];
 (
@@ -94,7 +102,7 @@ out geom;`;
 );
 out geom;`;
   const [data, ctxData] = await Promise.all([
-    overpass(coreQ),
+    overpass(coreQ, onStatus),
     overpass(ctxQ).catch(e => { console.warn('context features unavailable', e); return null; }),
   ]);
   if (ctxData?.elements) data.elements = [...(data.elements || []), ...ctxData.elements];
@@ -194,10 +202,13 @@ function writeCache(pos, entry) {
  * course lookup and hole-data queries run in parallel.
  * Returns { course, holes, features, fromCache }.
  */
-export async function getCourse(pos) {
+export async function getCourse(pos, onStatus) {
   const cached = readCache(pos);
   if (cached) return { ...cached, fromCache: true };
-  const [course, data] = await Promise.all([findCourse(pos), loadCourseData(pos)]);
+  const [course, data] = await Promise.all([
+    findCourse(pos, onStatus),
+    loadCourseData(pos, onStatus),
+  ]);
   const entry = { course, holes: data.holes, features: data.features };
   if (data.holes.length) writeCache(pos, entry);
   return { ...entry, fromCache: false };

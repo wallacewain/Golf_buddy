@@ -9,7 +9,7 @@
 import { dist, fmtDist, distNum } from './geo.js';
 import { store } from './store.js';
 import { GPS } from './gps.js';
-import { getCourse, nearestHole, greenDistances } from './course.js';
+import { getCourse, emptyFeatures, nearestHole, greenDistances } from './course.js';
 import { CLUBS, CTX, club, parseClub, rollFor, Caddie } from './caddie.js';
 import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
@@ -21,7 +21,7 @@ import { Hole3D } from './hole3d.js';
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v13';
+const APP_VERSION = 'v14';
 
 /* ---------------------------------------------------------------- state */
 
@@ -117,6 +117,49 @@ class DemoGPS {
 
 let activeGps = gps;
 
+/** Course lookup that can never wedge the app: live status while the map
+ *  servers are tried, a hard 30 s cap, and errors returned, not thrown. */
+function lookupCourse(pos) {
+  const cap = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('timed out')), 30000));
+  const attempt = getCourse(pos, (s) => { $('#status').textContent = s; });
+  return Promise.race([attempt, cap]).catch((e) => ({
+    course: null, holes: [], features: emptyFeatures(), fromCache: false, error: e,
+  }));
+}
+
+function offerCourseRetry(error) {
+  $('#status').textContent =
+    `Course lookup failed (${error?.message || 'no data'}) — tap here to retry`;
+  $('#status').onclick = retryCourseLookup;
+}
+
+async function retryCourseLookup() {
+  $('#status').onclick = null;
+  const pos = activeGps.position;
+  if (!pos || !state.round) return;
+  const res = await lookupCourse(pos);
+  if (res.error || !res.holes.length) {
+    offerCourseRetry(res.error);
+    return;
+  }
+  state.course = {
+    key: res.course?.id || res.course?.name || 'unknown',
+    name: res.course?.name || 'Unknown course',
+    holes: res.holes,
+    features: res.features,
+  };
+  state.round.courseName = state.course.name;
+  state.round.courseKey = state.course.key;
+  state.round.pars = Object.fromEntries(res.holes.filter(h => h.par).map(h => [h.num, h.par]));
+  store.saveRound(state.round);
+  $('#course-name').textContent = state.course.name;
+  $('#status').textContent = '';
+  const near = nearestHole(pos, res.holes);
+  setHole(near ? near.hole : res.holes[0], { announce: false });
+  voice.speak(`Found ${state.course.name}. You're all set.`);
+}
+
 async function startRound(demo = false) {
   state.demo = demo;
   activeGps = demo ? new DemoGPS() : gps;
@@ -134,15 +177,19 @@ async function startRound(demo = false) {
     const pos = await activeGps.start();
     $('#status').textContent = 'Looking up the course…';
 
-    const { course, holes, features, fromCache } = await getCourse(pos);
+    const { course, holes, features, fromCache, error } = await lookupCourse(pos);
     const data = { holes, features };
     if (fromCache) console.info('course loaded from cache');
 
     if (!data.holes.length) {
-      $('#status').textContent = course
-        ? `On ${course.name}, but no hole map data exists for it yet.`
-        : 'No golf course found nearby.';
-      toast('Shot tracking still works — distances need course map data (openstreetmap.org).', 6000);
+      if (error) {
+        offerCourseRetry(error);
+      } else {
+        $('#status').textContent = course
+          ? `On ${course.name}, but no hole map data exists for it yet.`
+          : 'No golf course found nearby.';
+        toast('Shot tracking still works — distances need course map data (openstreetmap.org).', 6000);
+      }
     }
 
     state.course = {
@@ -162,7 +209,7 @@ async function startRound(demo = false) {
     };
 
     $('#course-name').textContent = state.course.name;
-    $('#status').textContent = '';
+    if (data.holes.length) $('#status').textContent = ''; // keep failure/retry text visible
 
     // Show the instant 2D hole view right away; swap to the 3D map only
     // once its tiles are actually ready (it keeps loading in the background,
