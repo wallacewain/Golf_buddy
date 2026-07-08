@@ -14,8 +14,9 @@ import { CLUBS, CTX, club, parseClub, Caddie } from './caddie.js';
 import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
-import { CourseMap } from './map3d.js';
+import { CourseMap, getGoogleElevations } from './map3d.js';
 import { HoleView } from './holeview.js';
+import { Hole3D } from './hole3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -39,6 +40,7 @@ let voice = new Voice(state.settings);
 let shotListener = null;
 let courseMap = null;
 let holeView = null;
+let hole3d = null;
 let wakeLock = null;
 
 /* ------------------------------------------------------------- helpers */
@@ -164,10 +166,16 @@ async function startRound(demo = false) {
     // once its tiles are actually ready (it keeps loading in the background,
     // which on 4G can take a while — no reason to stare at a black screen).
     holeView = new HoleView($('#holecanvas'));
+    hole3d = new Hole3D($('#hole3d'));
+    if (!hole3d.supported()) hole3d = null; // no WebGL → 2D canvas carries it
     setView('hole');
     mapReady.then(async (ok) => {
       if (!ok) return;
-      if (state.hole) courseMap.showHole(state.hole, activeGps.position);
+      // Google is up: re-render the stylised hole with real elevation data
+      if (state.hole) {
+        showStylisedHole(state.hole);
+        courseMap.showHole(state.hole, activeGps.position);
+      }
       await courseMap.whenSteady(12000); // let the 3D tiles settle first
       if (!state.userToggledView) setView('map');
     }).catch(() => {});
@@ -226,6 +234,7 @@ function setHole(hole, { announce = true } = {}) {
   $('#hole-tip').classList.toggle('hidden', !tip);
 
   courseMap?.showHole(hole, activeGps.position);
+  showStylisedHole(hole);
   drawHoleView();
   updateGlance();
   if (announce) {
@@ -266,9 +275,19 @@ function stepHole(delta) {
 
 function onPosition(pos) {
   courseMap?.updatePlayer(pos);
+  hole3d?.updatePlayer(pos);
   drawHoleView();
   updateGlance();
   maybeAutoAdvance(pos);
+}
+
+/** Rebuild the Three.js hole scene (elevation cached per hole on-device). */
+function showStylisedHole(hole) {
+  if (!hole3d || !hole || !state.course) return;
+  hole3d.show(hole, state.course.features,
+    (latlngs) => getGoogleElevations(latlngs, `${state.course.key}/${hole.num}`))
+    .then(() => { if (activeGps.position) hole3d?.updatePlayer(activeGps.position); })
+    .catch(e => console.warn('hole3d failed', e));
 }
 
 let autoAdvanceCandidate = null;
@@ -317,16 +336,20 @@ function updateGlance() {
 }
 
 function drawHoleView() {
-  if (state.view === 'hole' && holeView && state.hole && state.course) {
+  if (state.view === 'hole' && !hole3d && holeView && state.hole && state.course) {
     holeView.render(state.hole, state.course.features, activeGps.position);
   }
 }
 
 function setView(v) {
   state.view = v;
+  const use3d = !!hole3d;
   $('#map').classList.toggle('hidden', v !== 'map');
-  $('#holecanvas').classList.toggle('hidden', v !== 'hole');
+  $('#hole3d').classList.toggle('hidden', v !== 'hole' || !use3d);
+  $('#holecanvas').classList.toggle('hidden', v !== 'hole' || use3d);
   $('#btn-view').textContent = v === 'map' ? 'Hole View' : '3D View';
+  hole3d?.setVisible(v === 'hole');
+  if (v === 'hole') hole3d?.resize();
   drawHoleView();
 }
 
@@ -493,6 +516,7 @@ async function askCaddie() {
 async function endRound() {
   finalizePendingShot(activeGps.position);
   activeGps.stop();
+  hole3d?.setVisible(false);
   shotListener?.stop();
   wakeLock?.release().catch(() => {});
   if (state.round) {
@@ -641,7 +665,7 @@ function boot() {
     state.userToggledView = true;
     setView(state.view === 'map' ? 'hole' : 'map');
   };
-  window.addEventListener('resize', drawHoleView);
+  window.addEventListener('resize', () => { drawHoleView(); hole3d?.resize(); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     navigator.serviceWorker.register('./sw.js').catch(() => {});

@@ -5,8 +5,10 @@ phone in your bag, and it:
 
 1. **Finds the course you're on** with GPS and pulls the hole layouts (tees,
    greens, fairways, bunkers, pars) from OpenStreetMap's golf data.
-2. **Shows a stylised 3D flyover** of every hole using Google Maps
-   photorealistic 3D — camera swoops in behind the tee looking down the hole.
+2. **Shows every hole in beautiful stylised 3D** — a low-poly Three.js scene
+   with crisp greens, fairways, bunkers, water and the pin, shaped by real
+   slopes from Google's Elevation data. Drag to orbit, pinch to zoom. A
+   Google Maps photorealistic 3D flyover is one tap away.
 3. **Hears your shot** with the microphone (the impact "crack"), then *asks
    out loud* **"What club?"** — just say *"seven iron"* and it's logged.
 4. **Measures every shot with GPS** — the distance from where you hit to
@@ -124,8 +126,11 @@ js/app.js           round flow / state machine
 js/course.js        course + hole detection (Overpass/OSM)
 js/gps.js           position tracking
 js/geo.js           geodesy helpers
-js/map3d.js         Google Maps photorealistic 3D flyover (+ fallback)
-js/holeview.js      stylised 2D hole rendering (no key needed)
+js/map3d.js         Google Maps photorealistic 3D flyover + Elevation data
+js/hole3d.js        stylised low-poly 3D hole (Three.js, real slopes)
+js/holeview.js      stylised 2D hole rendering (no WebGL fallback)
+js/analytics.js     course book + smart tips from your round history
+js/vendor/          three.js (vendored so the app works offline)
 js/shotlistener.js  mic impact detection (Web Audio)
 js/voice.js         speech out + speech in (Web Speech)
 js/caddie.js        clubs, carry learning, recommendations

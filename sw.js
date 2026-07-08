@@ -1,7 +1,7 @@
 /* sw.js — cache the app shell so Golf Buddy opens instantly on the course
  * (course data + maps still need signal, but the app itself works offline). */
 
-const CACHE = 'golf-buddy-v4';
+const CACHE = 'golf-buddy-v5';
 const SHELL = [
   './',
   './index.html',
@@ -17,6 +17,9 @@ const SHELL = [
   './js/shotlistener.js',
   './js/map3d.js',
   './js/holeview.js',
+  './js/hole3d.js',
+  './js/vendor/three.module.js',
+  './js/vendor/three.core.min.js',
   './icon.svg',
   './manifest.webmanifest',
 ];

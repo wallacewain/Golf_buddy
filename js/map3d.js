@@ -39,6 +39,38 @@ export function loadGoogleMaps(apiKey) {
   return loadPromise;
 }
 
+/* Google Elevation data gives the stylised 3D holes their real slopes.
+ * Results are cached per hole on-device — one API hit per hole, ever. */
+const ELEV_CACHE_KEY = 'gb.elev.v1';
+
+export async function getGoogleElevations(latlngs, cacheKey) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ELEV_CACHE_KEY)) || {};
+    if (cacheKey && all[cacheKey]?.length === latlngs.length) return all[cacheKey];
+  } catch { /* corrupt cache */ }
+  if (!window.google?.maps?.importLibrary) return null;
+  try {
+    const { ElevationService } = await google.maps.importLibrary('elevation');
+    const { results } = await new ElevationService()
+      .getElevationForLocations({ locations: latlngs });
+    if (!results || results.length !== latlngs.length) return null;
+    const data = results.map(r => Math.round(r.elevation * 10) / 10);
+    if (cacheKey) {
+      try {
+        const all = JSON.parse(localStorage.getItem(ELEV_CACHE_KEY)) || {};
+        const keys = Object.keys(all);
+        for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete all[k];
+        all[cacheKey] = data;
+        localStorage.setItem(ELEV_CACHE_KEY, JSON.stringify(all));
+      } catch { /* quota — skip caching */ }
+    }
+    return data;
+  } catch (e) {
+    console.warn('Elevation API unavailable', e);
+    return null;
+  }
+}
+
 export class CourseMap {
   constructor(container) {
     this.container = container;
