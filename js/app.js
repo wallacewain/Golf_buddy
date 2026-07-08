@@ -9,7 +9,7 @@
 import { dist, fmtDist, distNum } from './geo.js';
 import { store } from './store.js';
 import { GPS } from './gps.js';
-import { findCourse, loadCourseData, nearestHole, greenDistances } from './course.js';
+import { getCourse, nearestHole, greenDistances } from './course.js';
 import { CLUBS, club, parseClub, Caddie } from './caddie.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
@@ -28,6 +28,7 @@ const state = {
   pendingShot: null,    // last shot waiting for its landing position
   lastShotAt: 0,
   view: 'map',          // 'map' | 'hole'
+  userToggledView: false, // don't auto-switch views after a manual toggle
   demo: false,
 };
 
@@ -112,6 +113,7 @@ let activeGps = gps;
 
 async function startRound(demo = false) {
   state.demo = demo;
+  state.userToggledView = false;
   activeGps = demo ? new DemoGPS() : gps;
 
   $('#start-screen').classList.add('hidden');
@@ -119,11 +121,17 @@ async function startRound(demo = false) {
   $('#status').textContent = demo ? 'Demo: teleporting to St Andrews…' : 'Finding you…';
 
   try {
+    // Kick off the (slow) Google Maps 3D load immediately — it needs no
+    // position, so it downloads while GPS + course data are being fetched.
+    courseMap = new CourseMap($('#map'));
+    const mapReady = courseMap.init(state.settings.apiKey);
+
     const pos = await activeGps.start();
     $('#status').textContent = 'Looking up the course…';
 
-    const course = await findCourse(pos);
-    const data = await loadCourseData(course ? course.center : pos);
+    const { course, holes, features, fromCache } = await getCourse(pos);
+    const data = { holes, features };
+    if (fromCache) console.info('course loaded from cache');
 
     if (!data.holes.length) {
       $('#status').textContent = course
@@ -148,11 +156,17 @@ async function startRound(demo = false) {
     $('#course-name').textContent = state.course.name;
     $('#status').textContent = '';
 
-    // Map + hole view
-    courseMap = new CourseMap($('#map'));
-    const mapOk = await courseMap.init(state.settings.apiKey);
+    // Show the instant 2D hole view right away; swap to the 3D map only
+    // once its tiles are actually ready (it keeps loading in the background,
+    // which on 4G can take a while — no reason to stare at a black screen).
     holeView = new HoleView($('#holecanvas'));
-    if (!mapOk) setView('hole');
+    setView('hole');
+    mapReady.then(async (ok) => {
+      if (!ok) return;
+      if (state.hole) courseMap.showHole(state.hole, activeGps.position);
+      await courseMap.whenSteady(12000); // let the 3D tiles settle first
+      if (!state.userToggledView) setView('map');
+    }).catch(() => {});
 
     // Start on the nearest hole (or #1)
     const near = data.holes.length ? nearestHole(pos, data.holes) : null;
@@ -178,14 +192,14 @@ async function startRound(demo = false) {
       if (!document.hidden) { keepAwake(); shotListener?.resume(); }
     });
 
+    updateGlance();
     const holeCount = data.holes.length;
-    await voice.speak(
+    voice.speak(
       `Welcome to ${state.course.name}. ` +
       (state.hole ? `You're near hole ${state.hole.num}. ` : '') +
       (holeCount ? `${holeCount} holes mapped. ` : '') +
       `Play well. I'm listening for your shots.`
     );
-    updateGlance();
   } catch (e) {
     console.error(e);
     $('#status').textContent = `Couldn't start: ${e.message || e}`;
@@ -491,7 +505,10 @@ function boot() {
   $('#btn-end').onclick = endRound;
   $('#hole-prev').onclick = () => stepHole(-1);
   $('#hole-next').onclick = () => stepHole(1);
-  $('#btn-view').onclick = () => setView(state.view === 'map' ? 'hole' : 'map');
+  $('#btn-view').onclick = () => {
+    state.userToggledView = true;
+    setView(state.view === 'map' ? 'hole' : 'map');
+  };
   window.addEventListener('resize', drawHoleView);
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') {

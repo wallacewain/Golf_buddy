@@ -11,20 +11,29 @@ import { dist, centroid, distToLine } from './geo.js';
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
 ];
+
+// A busy public server can hang for ages — give each one 12 s, then fail
+// over to the next mirror instead of stalling the whole round start.
+const ENDPOINT_TIMEOUT_MS = 12000;
 
 async function overpass(query) {
   let lastErr;
   for (const url of OVERPASS_ENDPOINTS) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ENDPOINT_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
+        signal: ctl.signal,
       });
       if (!res.ok) throw new Error(`Overpass ${res.status}`);
       return await res.json();
     } catch (e) { lastErr = e; }
+    finally { clearTimeout(timer); }
   }
   throw lastErr || new Error('Overpass unreachable');
 }
@@ -115,6 +124,52 @@ out geom;`;
   for (const h of holes) if (!seen.has(h.num)) seen.set(h.num, h);
 
   return { holes: [...seen.values()], features };
+}
+
+/* ---------------------------------------------------------------- cache */
+
+const CACHE_KEY = 'gb.coursecache.v1';
+const CACHE_MAX_AGE_MS = 45 * 24 * 3600 * 1000; // courses don't move often
+const CACHE_MAX_ENTRIES = 5;
+
+// ~2 km grid tile — you start each round from roughly the same car park /
+// first tee, so this hits on every repeat visit to a course.
+function cacheTile(pos) {
+  return `${Math.round(pos.lat * 50)},${Math.round(pos.lng * 50)}`;
+}
+
+function readCache(pos) {
+  try {
+    const all = JSON.parse(localStorage.getItem(CACHE_KEY)) || {};
+    const hit = all[cacheTile(pos)];
+    if (hit && Date.now() - hit.t < CACHE_MAX_AGE_MS) return hit;
+  } catch { /* corrupt cache — ignore */ }
+  return null;
+}
+
+function writeCache(pos, entry) {
+  try {
+    const all = JSON.parse(localStorage.getItem(CACHE_KEY)) || {};
+    all[cacheTile(pos)] = { ...entry, t: Date.now() };
+    // keep only the most recent courses so we stay well under quota
+    const keys = Object.keys(all).sort((a, b) => all[b].t - all[a].t);
+    for (const k of keys.slice(CACHE_MAX_ENTRIES)) delete all[k];
+    localStorage.setItem(CACHE_KEY, JSON.stringify(all));
+  } catch { /* quota — not fatal, just no cache */ }
+}
+
+/**
+ * One-stop course load: cached when you've been here before, otherwise the
+ * course lookup and hole-data queries run in parallel.
+ * Returns { course, holes, features, fromCache }.
+ */
+export async function getCourse(pos) {
+  const cached = readCache(pos);
+  if (cached) return { ...cached, fromCache: true };
+  const [course, data] = await Promise.all([findCourse(pos), loadCourseData(pos)]);
+  const entry = { course, holes: data.holes, features: data.features };
+  if (data.holes.length) writeCache(pos, entry);
+  return { ...entry, fromCache: false };
 }
 
 /** Which hole is the player most likely on? (nearest hole corridor) */

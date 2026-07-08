@@ -155,6 +155,27 @@ export class CourseMap {
     }
   }
 
+  /**
+   * Resolves once the photorealistic view has finished streaming tiles for
+   * the current camera (or after timeoutMs — a partial map still beats a
+   * spinner). Immediate for the non-3D modes.
+   */
+  whenSteady(timeoutMs = 12000) {
+    if (this.mode !== 'photo3d' || !this.el) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.el.removeEventListener('gmp-steadychange', onSteady);
+        resolve();
+      };
+      const onSteady = (e) => { if (e.isSteady) finish(); };
+      this.el.addEventListener('gmp-steadychange', onSteady);
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
   /** Keep a marker on the player as they walk. */
   async updatePlayer(pos) {
     if (this.mode === 'sat') {
