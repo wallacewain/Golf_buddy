@@ -885,7 +885,7 @@ export class Hole3D {
           let dA = angle - pinch.angle;
           if (dA > Math.PI) dA -= 2 * Math.PI;
           if (dA < -Math.PI) dA += 2 * Math.PI;
-          o.azimuth -= dA;
+          o.azimuth += dA; // scene rotates WITH the fingers, like Maps
           o.azimuthGoal = o.azimuth;
           this._applyOrbit();
           // …then keep the ground grabbed at gesture start pinned under the

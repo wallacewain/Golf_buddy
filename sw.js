@@ -3,7 +3,7 @@
  * refreshes the cache — so you're never more than one open() behind the
  * latest version, and it still works with no signal on the course. */
 
-const CACHE = 'golf-buddy-v10';
+const CACHE = 'golf-buddy-v11';
 const SHELL = [
   './',
   './index.html',
