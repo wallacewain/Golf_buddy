@@ -63,10 +63,13 @@ out tags center;`;
   return courses[0] || null;
 }
 
-/** Fetch hole layouts + course features around the player. */
+/** Fetch hole layouts + course features around the player.
+ *  Two queries in parallel: the core golf data the round depends on, and a
+ *  context query (trees, beach, rough, boundary — big and non-essential)
+ *  that is allowed to fail or dawdle without blocking the round start. */
 export async function loadCourseData(pos) {
-  const r = 3000;
-  const q = `[out:json][timeout:30];
+  const r = 3000, rc = 2200;
+  const coreQ = `[out:json][timeout:30];
 (
   way["golf"="hole"](around:${r},${pos.lat},${pos.lng});
   way["golf"="green"](around:${r},${pos.lat},${pos.lng});
@@ -75,18 +78,26 @@ export async function loadCourseData(pos) {
   way["golf"="bunker"](around:${r},${pos.lat},${pos.lng});
   way["natural"="water"](around:${r},${pos.lat},${pos.lng});
   way["golf"="water_hazard"](around:${r},${pos.lat},${pos.lng});
-  way["golf"="rough"](around:${r},${pos.lat},${pos.lng});
-  way["natural"="scrub"](around:${r},${pos.lat},${pos.lng});
-  way["natural"="heath"](around:${r},${pos.lat},${pos.lng});
-  way["natural"="wood"](around:${r},${pos.lat},${pos.lng});
-  way["landuse"="forest"](around:${r},${pos.lat},${pos.lng});
-  way["natural"="beach"](around:${r},${pos.lat},${pos.lng});
-  way["natural"="sand"](around:${r},${pos.lat},${pos.lng});
-  way["leisure"="golf_course"](around:${r},${pos.lat},${pos.lng});
-  node["natural"="tree"](around:${r},${pos.lat},${pos.lng});
 );
 out geom;`;
-  const data = await overpass(q);
+  const ctxQ = `[out:json][timeout:20];
+(
+  way["golf"="rough"](around:${rc},${pos.lat},${pos.lng});
+  way["natural"="scrub"](around:${rc},${pos.lat},${pos.lng});
+  way["natural"="heath"](around:${rc},${pos.lat},${pos.lng});
+  way["natural"="wood"](around:${rc},${pos.lat},${pos.lng});
+  way["landuse"="forest"](around:${rc},${pos.lat},${pos.lng});
+  way["natural"="beach"](around:${rc},${pos.lat},${pos.lng});
+  way["natural"="sand"](around:${rc},${pos.lat},${pos.lng});
+  way["leisure"="golf_course"](around:${rc},${pos.lat},${pos.lng});
+  node["natural"="tree"](around:${rc},${pos.lat},${pos.lng});
+);
+out geom;`;
+  const [data, ctxData] = await Promise.all([
+    overpass(coreQ),
+    overpass(ctxQ).catch(e => { console.warn('context features unavailable', e); return null; }),
+  ]);
+  if (ctxData?.elements) data.elements = [...(data.elements || []), ...ctxData.elements];
 
   const features = {
     holes: [], greens: [], tees: [], fairways: [], bunkers: [], water: [],
