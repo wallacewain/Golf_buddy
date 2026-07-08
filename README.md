@@ -82,6 +82,7 @@ and helps every golfer who plays it.
 | Tap **Hole Note** and jot a tip ("aim left of the bunker") | Saves it for that hole and reads it back next time you're on that tee |
 | Tap 🎙️ **Caddie** (or glance at the screen) | Speaks distance to the green + club recommendation |
 | Walk to the next tee | Auto-advances to the next hole and announces it |
+| Tap **Rest** between shots | Screen goes black (battery saver) — mic, GPS and voice keep working; tap to wake |
 | Putt out & tap 🏁 **End** | Saves the round and updates your club distances |
 
 The manual 🏌️ **Shot** button does the same as the mic detection, for driving

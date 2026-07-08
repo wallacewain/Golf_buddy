@@ -84,6 +84,11 @@
           <path d="M8 16C11 9 16 5.5 21 4"/><circle cx="6" cy="18" r="2.6"/>
         </svg><span>Shot</span>
       </button>
+      <button id="btn-dim" class="action" aria-label="Battery saver — black screen, still listening">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>
+        </svg><span>Rest</span>
+      </button>
       <button id="btn-settings-2" class="action" aria-label="Settings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
           <path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="var(--bg2)"/><circle cx="15" cy="12" r="2.2" fill="var(--bg2)"/><circle cx="8" cy="17" r="2.2" fill="var(--bg2)"/>
@@ -162,6 +167,14 @@
       <div id="stats-body"></div>
       <button id="stats-close" class="small-btn">Close</button>
     </div>
+  </div>
+
+  <!-- ============================== battery saver: black screen, still listening -->
+  <div id="dim-screen" class="hidden">
+    <div class="dim-pulse"></div>
+    <div id="dim-dist">—</div>
+    <div id="dim-club"></div>
+    <div class="dim-hint">listening for shots · tap to wake</div>
   </div>
 
   <div id="toast"></div>

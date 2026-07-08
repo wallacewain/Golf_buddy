@@ -31,6 +31,7 @@ const state = {
   lastShotAt: 0,
   view: 'map',          // 'map' | 'hole'
   userToggledView: false, // don't auto-switch views after a manual toggle
+  dimmed: false,        // battery saver: black screen, still listening
   demo: false,
 };
 
@@ -233,10 +234,14 @@ function setHole(hole, { announce = true } = {}) {
   $('#hole-tip').textContent = tip ? `“${tip}”` : '';
   $('#hole-tip').classList.toggle('hidden', !tip);
 
-  courseMap?.showHole(hole, activeGps.position);
-  showStylisedHole(hole);
-  drawHoleView();
-  updateGlance();
+  if (state.dimmed) {
+    updateDimReadout(); // visuals rebuild on wake
+  } else {
+    courseMap?.showHole(hole, activeGps.position);
+    showStylisedHole(hole);
+    drawHoleView();
+    updateGlance();
+  }
   if (announce) {
     voice.speak(
       `Hole ${hole.num}. ` +
@@ -274,11 +279,57 @@ function stepHole(delta) {
 }
 
 function onPosition(pos) {
+  if (state.dimmed) {
+    updateDimReadout();
+    maybeAutoAdvance(pos);
+    return; // skip all rendering while the screen is resting
+  }
   courseMap?.updatePlayer(pos);
   hole3d?.updatePlayer(pos);
   drawHoleView();
   updateGlance();
   maybeAutoAdvance(pos);
+}
+
+/* --------------------------------------------------- battery saver */
+
+/* Black screen (OLED pixels off), rendering paused; GPS, mic, and the
+ * voice caddie keep working. Tap anywhere to wake. */
+function enterDim() {
+  state.dimmed = true;
+  $('#dim-screen').classList.remove('hidden');
+  // stop the expensive renderers, not just cover them
+  hole3d?.setVisible(false);
+  $('#map').classList.add('hidden');
+  $('#hole3d').classList.add('hidden');
+  $('#holecanvas').classList.add('hidden');
+  updateDimReadout();
+  voice.speak('Battery saver on. Screen off — I’m still listening.');
+}
+
+function exitDim() {
+  if (!state.dimmed) return;
+  state.dimmed = false;
+  $('#dim-screen').classList.add('hidden');
+  setView(state.view); // restores the right renderer
+  if (state.hole) {   // the hole may have advanced while the screen rested
+    courseMap?.showHole(state.hole, activeGps.position);
+    showStylisedHole(state.hole);
+  }
+  updateGlance();
+  if (activeGps.position) {
+    courseMap?.updatePlayer(activeGps.position);
+    hole3d?.updatePlayer(activeGps.position);
+  }
+}
+
+function updateDimReadout() {
+  const pos = activeGps.position;
+  if (!pos || !state.hole) { $('#dim-dist').textContent = '—'; return; }
+  const g = greenDistances(pos, state.hole);
+  $('#dim-dist').textContent = distNum(g.middle, state.settings.units);
+  const reco = caddie.recommend(g.middle, shotContext(pos, state.hole));
+  $('#dim-club').textContent = club(reco.primary).label;
 }
 
 /** Rebuild the Three.js hole scene (elevation cached per hole on-device). */
@@ -456,6 +507,7 @@ function renderShotCount() {
 }
 
 function pickClubOnScreen() {
+  exitDim(); // can't tap a club on a black screen
   return new Promise((resolve) => {
     const sheet = $('#club-sheet');
     const grid = $('#club-grid');
@@ -514,6 +566,7 @@ async function askCaddie() {
 /* --------------------------------------------------------- end / stats */
 
 async function endRound() {
+  exitDim();
   finalizePendingShot(activeGps.position);
   activeGps.stop();
   hole3d?.setVisible(false);
@@ -658,6 +711,8 @@ function boot() {
   $('#btn-end').onclick = endRound;
   $('#hole-prev').onclick = () => stepHole(-1);
   $('#hole-next').onclick = () => stepHole(1);
+  $('#btn-dim').onclick = enterDim;
+  $('#dim-screen').onclick = exitDim;
   $('#btn-note').onclick = openNote;
   $('#note-save').onclick = saveNote;
   $('#note-close').onclick = () => $('#note-sheet').classList.add('hidden');
