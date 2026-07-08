@@ -21,7 +21,7 @@ import { Hole3D } from './hole3d.js';
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v11';
+const APP_VERSION = 'v12';
 
 /* ---------------------------------------------------------------- state */
 

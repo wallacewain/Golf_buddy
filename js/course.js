@@ -77,8 +77,12 @@ export async function loadCourseData(pos) {
   way["golf"="water_hazard"](around:${r},${pos.lat},${pos.lng});
   way["golf"="rough"](around:${r},${pos.lat},${pos.lng});
   way["natural"="scrub"](around:${r},${pos.lat},${pos.lng});
+  way["natural"="heath"](around:${r},${pos.lat},${pos.lng});
   way["natural"="wood"](around:${r},${pos.lat},${pos.lng});
   way["landuse"="forest"](around:${r},${pos.lat},${pos.lng});
+  way["natural"="beach"](around:${r},${pos.lat},${pos.lng});
+  way["natural"="sand"](around:${r},${pos.lat},${pos.lng});
+  way["leisure"="golf_course"](around:${r},${pos.lat},${pos.lng});
   node["natural"="tree"](around:${r},${pos.lat},${pos.lng});
 );
 out geom;`;
@@ -86,7 +90,7 @@ out geom;`;
 
   const features = {
     holes: [], greens: [], tees: [], fairways: [], bunkers: [], water: [],
-    roughs: [], woods: [], trees: [],
+    roughs: [], woods: [], trees: [], beaches: [], boundaries: [],
   };
   for (const el of data.elements || []) {
     const t = el.tags || {};
@@ -108,8 +112,10 @@ out geom;`;
     else if (t.golf === 'tee') features.tees.push(pts);
     else if (t.golf === 'fairway') features.fairways.push(pts);
     else if (t.golf === 'bunker') features.bunkers.push(pts);
-    else if (t.golf === 'rough' || t.natural === 'scrub') features.roughs.push(pts);
+    else if (t.golf === 'rough' || t.natural === 'scrub' || t.natural === 'heath') features.roughs.push(pts);
     else if (t.natural === 'wood' || t.landuse === 'forest') features.woods.push(pts);
+    else if (t.natural === 'beach' || t.natural === 'sand') features.beaches.push(pts);
+    else if (t.leisure === 'golf_course') features.boundaries.push(pts);
     else features.water.push(pts);
   }
 
@@ -142,7 +148,7 @@ out geom;`;
 
 /* ---------------------------------------------------------------- cache */
 
-const CACHE_KEY = 'gb.coursecache.v2'; // v2: rough, woods and tree data added
+const CACHE_KEY = 'gb.coursecache.v3'; // v3: beach, heath and course boundary added
 const CACHE_MAX_AGE_MS = 45 * 24 * 3600 * 1000; // courses don't move often
 const CACHE_MAX_ENTRIES = 5;
 

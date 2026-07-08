@@ -21,8 +21,10 @@ const COL = {
   bg: 0x0d1d15,
   rough: '#20502f',
   roughStripe: 'rgba(0,0,0,0.05)',
-  semiRough: '#2a6039',
+  semiRough: '#316b40',
   woodsFloor: '#173d22',
+  beach: '#d8c9a0',
+  outOfBounds: 'rgba(7, 16, 11, 0.55)',
   trunk: 0x5c4632,
   canopy: 0x2c6b3c,
   fairway: '#3f8f52',
@@ -127,6 +129,8 @@ export class Hole3D {
       fairways: local(features.fairways),
       roughs: local(features.roughs || []),
       woods: local(features.woods || []),
+      beaches: local(features.beaches || []),
+      boundaries: (features.boundaries || []).map(poly => poly.map(toLocal)),
       trees: (features.trees || [])
         .filter(p => dist(p, hole.greenCenter) < 900 || dist(p, hole.tee) < 900)
         .map(toLocal),
@@ -229,7 +233,10 @@ export class Hole3D {
       const elev = await getElevations(latlngs, boundsTag);
       if (elev && elev.length === latlngs.length) {
         const min = Math.min(...elev);
-        grid.data = elev.map(e => e - min);
+        // Vertical exaggeration: links-land breaks of a metre or two are
+        // invisible at true scale — like every golf game, we amplify them.
+        // (Also amplifies the roll-out kick, which errs on the warning side.)
+        grid.data = elev.map(e => (e - min) * 1.8);
       }
     } catch (e) { console.warn('elevation unavailable', e); }
     return grid;
@@ -321,8 +328,9 @@ export class Hole3D {
     g.fillRect(0, 0, W, H);
     stripes(COL.roughStripe, 0);
 
-    // mapped semi-rough / gorse patches, then woodland floor under the trees
+    // mapped semi-rough / gorse / heath, beach and dune sand, woodland floor
     for (const rg of this.regions.roughs) { path(rg); soft(COL.semiRough, 12); }
+    for (const bc of this.regions.beaches) { path(bc); soft(COL.beach, 16); }
     for (const wd of this.regions.woods) { path(wd); soft(COL.woodsFloor, 12); }
 
     // fairways: soft edge, brighter mow stripes clipped inside
@@ -362,6 +370,30 @@ export class Hole3D {
       g.save(); path(gr); g.clip();
       g.fillStyle = sheen; g.fillRect(0, 0, W, H);
       g.restore();
+    }
+
+    // organic turf mottling so vast fairways/rough don't read as flat plastic
+    for (let i = 0; i < 220; i++) {
+      const x = Math.random() * W, y = Math.random() * H;
+      const r = 14 + Math.random() * 60;
+      const lg = g.createRadialGradient(x, y, 0, x, y, r);
+      const tone = Math.random() < 0.5 ? '255,255,255' : '0,0,0';
+      lg.addColorStop(0, `rgba(${tone},${0.02 + Math.random() * 0.025})`);
+      lg.addColorStop(1, `rgba(${tone},0)`);
+      g.fillStyle = lg;
+      g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+
+    // dim everything outside the course boundary — out of bounds reads dark
+    if (this.regions.boundaries.length) {
+      g.beginPath();
+      g.rect(0, 0, W, H);
+      for (const poly of this.regions.boundaries) {
+        poly.forEach((p, i) => i ? g.lineTo(X(p.x), Y(p.z)) : g.moveTo(X(p.x), Y(p.z)));
+        g.closePath();
+      }
+      g.fillStyle = COL.outOfBounds;
+      g.fill('evenodd');
     }
 
     // fade the rectangle edges away so the hole floats like a diorama
@@ -668,6 +700,7 @@ export class Hole3D {
     const pt = { x, z };
     const order = [
       ['water', this.regions.water], ['bunker', this.regions.bunkers],
+      ['bunker', this.regions.beaches],
       ['green', this.regions.greens], ['fairway', this.regions.fairways],
     ];
     for (const [name, polys] of order) {
