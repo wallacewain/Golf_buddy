@@ -298,7 +298,7 @@ function setView(v) {
   state.view = v;
   $('#map').classList.toggle('hidden', v !== 'map');
   $('#holecanvas').classList.toggle('hidden', v !== 'hole');
-  $('#btn-view').textContent = v === 'map' ? '⛳ Hole view' : '🌍 3D view';
+  $('#btn-view').textContent = v === 'map' ? 'Hole View' : '3D View';
   drawHoleView();
 }
 
@@ -354,7 +354,7 @@ function recordShot(clubId, pos) {
   store.saveRound(state.round);
 
   const c = club(clubId);
-  toast(`⛳ ${c.label} logged${shot.hole ? ` on hole ${shot.hole}` : ''}`);
+  toast(`${c.label} logged${shot.hole ? ` on hole ${shot.hole}` : ''}`);
   voice.speak(`${c.label}. Got it.`);
   renderShotCount();
 }
@@ -368,7 +368,7 @@ function finalizePendingShot(landingPos) {
   const counted = caddie.recordCarry(p.club, carry);
   store.saveRound(state.round);
   if (counted) {
-    toast(`${club(p.club).label}: ${fmtDist(carry, state.settings.units)} — noted 📊`, 3000);
+    toast(`${club(p.club).label}: ${fmtDist(carry, state.settings.units)} — noted`, 3000);
   }
 }
 
@@ -429,7 +429,7 @@ async function askCaddie() {
   shotListener?.setPaused(true);
   await voice.speak(msg);
   shotListener?.setPaused(false);
-  toast(`🎯 ${msg}`, 6000);
+  toast(msg, 6000);
 }
 
 /* --------------------------------------------------------- end / stats */

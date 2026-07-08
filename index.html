@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0d2b16">
+  <meta name="theme-color" content="#0f2018">
   <meta name="description" content="Golf Buddy — a hands-free GPS caddie that finds your course, shows a 3D flyover, hears your shots and learns your club distances.">
   <title>Golf Buddy</title>
   <link rel="manifest" href="manifest.webmanifest">
@@ -16,17 +16,28 @@
   <!-- ============================== start screen -->
   <section id="start-screen">
     <div class="hero">
-      <div class="logo">⛳</div>
+      <svg class="crest" viewBox="0 0 96 96" fill="none" stroke="currentColor" aria-hidden="true">
+        <circle cx="48" cy="48" r="45" stroke-width="1.5"/>
+        <circle cx="48" cy="48" r="39" stroke-width="0.75" opacity="0.45"/>
+        <line x1="44" y1="70" x2="44" y2="26" stroke-width="2" stroke-linecap="round"/>
+        <path d="M44 26 L64 32 L44 40 Z" fill="currentColor" stroke="none"/>
+        <ellipse cx="48" cy="71" rx="14" ry="3.5" stroke-width="1" opacity="0.6"/>
+      </svg>
       <h1>Golf Buddy</h1>
-      <p class="tagline">Your hands-free GPS caddie.<br>
-        It finds the course, hears your shots,<br>and learns how far you really hit each club.</p>
+      <svg class="rule" viewBox="0 0 140 13" fill="none" stroke="currentColor" aria-hidden="true">
+        <line x1="0" y1="6.5" x2="58" y2="6.5" stroke-width="1"/>
+        <rect x="65" y="1.5" width="10" height="10" transform="rotate(45 70 6.5)" stroke-width="1"/>
+        <line x1="82" y1="6.5" x2="140" y2="6.5" stroke-width="1"/>
+      </svg>
+      <p class="tagline">Your hands-free caddie.<br>
+        It finds the course, hears your shots,<br>and learns how far you truly hit each club.</p>
     </div>
     <div class="start-actions">
       <button id="btn-start" class="big-btn primary">Start Round</button>
-      <button id="btn-demo" class="big-btn ghost">Try demo (St Andrews)</button>
+      <button id="btn-demo" class="big-btn ghost">Demo · St Andrews</button>
       <div class="row">
-        <button id="btn-stats" class="small-btn">📊 My clubs</button>
-        <button id="btn-settings" class="small-btn">⚙️ Settings</button>
+        <button id="btn-stats" class="small-btn">My Clubs</button>
+        <button id="btn-settings" class="small-btn">Settings</button>
       </div>
     </div>
     <p class="fineprint">Needs GPS + mic permission on the course. Add a Google Maps key in Settings for the 3D flyover — everything else works without it.</p>
@@ -46,7 +57,7 @@
     <div id="viewwrap">
       <div id="map"></div>
       <canvas id="holecanvas" class="hidden"></canvas>
-      <button id="btn-view" class="chip">⛳ Hole view</button>
+      <button id="btn-view" class="chip">Hole View</button>
       <div id="status"></div>
     </div>
 
@@ -60,10 +71,26 @@
     </div>
 
     <nav id="actionbar">
-      <button id="btn-caddie" class="action primary" aria-label="Ask caddie">🎙️<span>Caddie</span></button>
-      <button id="btn-shot" class="action" aria-label="Mark a shot">🏌️<span>Shot</span></button>
-      <button id="btn-settings-2" class="action" aria-label="Settings">⚙️<span>More</span></button>
-      <button id="btn-end" class="action danger" aria-label="End round">🏁<span>End</span></button>
+      <button id="btn-caddie" class="action primary" aria-label="Ask caddie">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"/>
+        </svg><span>Caddie</span>
+      </button>
+      <button id="btn-shot" class="action" aria-label="Mark a shot">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <path d="M8 16C11 9 16 5.5 21 4"/><circle cx="6" cy="18" r="2.6"/>
+        </svg><span>Shot</span>
+      </button>
+      <button id="btn-settings-2" class="action" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2.2" fill="var(--bg2)"/><circle cx="15" cy="12" r="2.2" fill="var(--bg2)"/><circle cx="8" cy="17" r="2.2" fill="var(--bg2)"/>
+        </svg><span>More</span>
+      </button>
+      <button id="btn-end" class="action danger" aria-label="End round">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 21V4M6 4h11l-2.5 3.5L17 11H6"/>
+        </svg><span>End</span>
+      </button>
     </nav>
     <div id="shot-count"></div>
   </section>

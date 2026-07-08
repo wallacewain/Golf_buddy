@@ -9,16 +9,16 @@
 import { bearing, dist, toRad } from './geo.js';
 
 const COLORS = {
-  bg: '#0d2b16',
-  rough: '#14381d',
-  fairway: '#2c6e35',
-  green: '#4caf50',
-  tee: '#3a8a44',
-  bunker: '#e8d9a0',
-  water: '#2a6fdb',
-  line: 'rgba(255, 213, 74, 0.9)',
-  player: '#4da3ff',
-  text: 'rgba(255,255,255,0.85)',
+  bg: '#0f2018',
+  rough: '#142a1f',
+  fairway: '#2a5c3a',
+  green: '#3f7d4e',
+  tee: '#2f6640',
+  bunker: '#d9c391',
+  water: '#33608c',
+  line: 'rgba(200, 169, 106, 0.95)',
+  player: '#f2ead8',
+  text: 'rgba(242, 234, 216, 0.85)',
 };
 
 export class HoleView {
@@ -112,10 +112,10 @@ export class HoleView {
 
     // Flag on the green
     const g = toScreen(hole.greenCenter);
-    ctx.strokeStyle = '#fff';
+    ctx.strokeStyle = '#f2ead8';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(g.x, g.y); ctx.lineTo(g.x, g.y - 18); ctx.stroke();
-    ctx.fillStyle = '#ff5252';
+    ctx.fillStyle = '#c25b4e';
     ctx.beginPath();
     ctx.moveTo(g.x, g.y - 18); ctx.lineTo(g.x + 11, g.y - 14); ctx.lineTo(g.x, g.y - 10);
     ctx.closePath(); ctx.fill();
@@ -127,11 +127,11 @@ export class HoleView {
       ctx.arc(s.x, s.y, 7, 0, Math.PI * 2);
       ctx.fillStyle = COLORS.player;
       ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.strokeStyle = '#c8a96a'; ctx.lineWidth = 2; ctx.stroke();
 
       ctx.beginPath();
       ctx.moveTo(s.x, s.y); ctx.lineTo(g.x, g.y);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.strokeStyle = 'rgba(242, 234, 216, 0.5)';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 6]);
       ctx.stroke();
