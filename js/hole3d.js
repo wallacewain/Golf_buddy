@@ -49,7 +49,7 @@ const COL = {
 const CELL_M = 3;         // mesh resolution — smooth shading hides the grid
 const MAX_CELLS = 220;
 const MARGIN_M = 50;
-const FLOW_N = 1100;      // slope particles
+const FLOW_N = 1400;      // slope particles
 
 export class Hole3D {
   constructor(container) {
@@ -438,18 +438,22 @@ export class Hole3D {
     this.scene.add(line);
   }
 
+  /** "You are here" — the familiar blue location dot with a pulsing halo. */
   _addBall() {
     const g = new THREE.Group();
-    const ball = new THREE.Mesh(
-      new THREE.SphereGeometry(1.3, 20, 16),
-      new THREE.MeshLambertMaterial({ color: COL.ball }));
-    ball.position.y = 1.3;
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(2.2, 2.8, 40),
-      new THREE.MeshBasicMaterial({ color: COL.ball, transparent: true, opacity: 0.45 }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.25;
-    g.add(ball, ring);
+    const flat = (geo, color, opacity, y, order) => {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity, depthTest: false, side: THREE.DoubleSide,
+      }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = y;
+      m.renderOrder = order;
+      return m;
+    };
+    this._ballHalo = flat(new THREE.CircleGeometry(7, 40), 0x4da3ff, 0.16, 0.3, 7);
+    const ring = flat(new THREE.RingGeometry(2.0, 2.9, 40), 0xffffff, 0.95, 0.4, 8);
+    const dot = flat(new THREE.CircleGeometry(2.0, 40), 0x4285f4, 1, 0.5, 9);
+    g.add(this._ballHalo, ring, dot);
     g.visible = false;
     this.scene.add(g);
     return g;
@@ -530,7 +534,7 @@ export class Hole3D {
     geo.setAttribute('position', new THREE.BufferAttribute(this.flowP, 3));
     geo.setAttribute('color', new THREE.BufferAttribute(this.flowC, 3));
     const mat = new THREE.PointsMaterial({
-      size: 1.7, sizeAttenuation: true, map: dotSprite(), vertexColors: true,
+      size: 2.4, sizeAttenuation: true, map: dotSprite(), vertexColors: true,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     });
     this.flowPoints = new THREE.Points(geo, mat);
@@ -568,19 +572,19 @@ export class Hole3D {
       p.life += dt;
       const g = hasSlope ? this._grad(p.x, p.z) : { x: 0, z: 0 };
       const mag = Math.hypot(g.x, g.z);
-      if (p.life > p.dur || mag < 0.008) {
+      if (p.life > p.dur || mag < 0.005) {
         if (p.life > p.dur) this._respawnFlow(p);
         // invisible when flat
         this.flowC[i * 3] = this.flowC[i * 3 + 1] = this.flowC[i * 3 + 2] = 0;
         this.flowP[i * 3 + 1] = -999;
-        if (mag < 0.008) p.life += dt * 2; // recycle flat spawns faster
+        if (mag < 0.005) p.life += dt * 2; // recycle flat spawns faster
         continue;
       }
-      const speed = clamp(mag * 90, 2.5, 14); // m/s downhill drift
+      const speed = clamp(mag * 110, 3, 16); // m/s downhill drift
       p.x -= (g.x / mag) * speed * dt;
       p.z -= (g.z / mag) * speed * dt;
       const fade = Math.sin(Math.min(1, p.life / p.dur) * Math.PI);
-      const a = fade * clamp(mag * 14, 0.12, 0.85);
+      const a = fade * clamp(mag * 22, 0.25, 1);
       this.flowP[i * 3] = p.x;
       this.flowP[i * 3 + 1] = this._h(p.x, p.z) + 0.7;
       this.flowP[i * 3 + 2] = p.z;
@@ -861,6 +865,7 @@ export class Hole3D {
 
     el.addEventListener('pointermove', (e) => {
       if (!pointers.has(e.pointerId) || !this.orbit) return;
+      const prevPt = pointers.get(e.pointerId);
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       const o = this.orbit;
 
@@ -882,6 +887,19 @@ export class Hole3D {
         this._panVel.lerp(delta.divideScalar(dt), 0.35);
         const vMax = this.orbit.radius * 2.5;
         if (this._panVel.length() > vMax) this._panVel.setLength(vMax);
+      } else if (pointers.size === 1) {
+        // finger started on the sky — screen-space pan so dragging
+        // ALWAYS moves the view, then re-grab the ground when possible
+        interact();
+        const dx = e.clientX - prevPt.x, dy = e.clientY - prevPt.y;
+        const s = o.radius * 0.0016;
+        const sinA = Math.sin(o.azimuth), cosA = Math.cos(o.azimuth);
+        o.target.x += -dx * s * cosA - dy * s * sinA;
+        o.target.z += dx * s * sinA - dy * s * cosA;
+        o.targetGoal.copy(o.target);
+        this._clampTarget();
+        this._applyOrbit();
+        grab = this._groundPoint(e.clientX, e.clientY);
       } else if (pointers.size === 2 && pinch) {
         const [a, b] = [...pointers.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -991,6 +1009,11 @@ export class Hole3D {
         if (this._previewRing) {
           const s = 1 + Math.sin(t / 450) * 0.05; // gentle breathing pulse
           this._previewRing.scale.set(s, s, 1);
+        }
+        if (this._ballHalo) {
+          const hs = 1 + Math.sin(t / 700) * 0.25;
+          this._ballHalo.scale.set(hs, hs, 1);
+          this._ballHalo.material.opacity = 0.1 + 0.08 * (1 + Math.sin(t / 700)) / 2;
         }
         this.renderer.render(this.scene, this.camera);
       };

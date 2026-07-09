@@ -43,17 +43,28 @@ export function loadGoogleMaps(apiKey) {
  * Results are cached per hole on-device — one API hit per hole, ever. */
 const ELEV_CACHE_KEY = 'gb.elev.v1';
 
+let elevationError = null;
+/** Why the last elevation fetch failed (null = it worked / not tried). */
+export function lastElevationError() { return elevationError; }
+
 export async function getGoogleElevations(latlngs, cacheKey) {
   try {
     const all = JSON.parse(localStorage.getItem(ELEV_CACHE_KEY)) || {};
     if (cacheKey && all[cacheKey]?.length === latlngs.length) return all[cacheKey];
   } catch { /* corrupt cache */ }
-  if (!window.google?.maps?.importLibrary) return null;
+  if (!window.google?.maps?.importLibrary) {
+    elevationError = 'Google Maps not loaded — add an API key in Settings';
+    return null;
+  }
   try {
     const { ElevationService } = await google.maps.importLibrary('elevation');
     const { results } = await new ElevationService()
       .getElevationForLocations({ locations: latlngs });
-    if (!results || results.length !== latlngs.length) return null;
+    if (!results || results.length !== latlngs.length) {
+      elevationError = 'Elevation API returned no data';
+      return null;
+    }
+    elevationError = null;
     const data = results.map(r => Math.round(r.elevation * 10) / 10);
     if (cacheKey) {
       try {
@@ -67,6 +78,7 @@ export async function getGoogleElevations(latlngs, cacheKey) {
     return data;
   } catch (e) {
     console.warn('Elevation API unavailable', e);
+    elevationError = String(e?.message || e).slice(0, 120);
     return null;
   }
 }

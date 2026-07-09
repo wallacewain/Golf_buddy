@@ -14,14 +14,14 @@ import { CLUBS, CTX, club, parseClub, rollFor, Caddie } from './caddie.js';
 import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
-import { CourseMap, getGoogleElevations } from './map3d.js';
+import { CourseMap, getGoogleElevations, lastElevationError } from './map3d.js';
 import { HoleView } from './holeview.js';
 import { Hole3D } from './hole3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v14';
+const APP_VERSION = 'v15';
 
 /* ---------------------------------------------------------------- state */
 
@@ -162,6 +162,7 @@ async function retryCourseLookup() {
 
 async function startRound(demo = false) {
   state.demo = demo;
+  state.slopeWarned = false;
   activeGps = demo ? new DemoGPS() : gps;
 
   $('#start-screen').classList.add('hidden');
@@ -392,6 +393,11 @@ function showStylisedHole(hole) {
     .then(() => {
       if (activeGps.position) hole3d?.updatePlayer(activeGps.position);
       updateGlance(); // scene is ready now — draw the landing preview
+      // slopes silently missing is unhelpful — say why, once per round
+      if (hole3d && !hole3d.heights?.data && window.google?.maps && !state.slopeWarned) {
+        state.slopeWarned = true;
+        toast(`No slope data: ${lastElevationError() || 'unknown'}. The 3D slopes need the Elevation API enabled for your Google key.`, 8000);
+      }
     })
     .catch(e => console.warn('hole3d failed', e));
 }
