@@ -395,3 +395,6 @@ input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--brass); 
   max-width: 90vw; text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.tappable { pointer-events: auto; border-color: var(--brass); cursor: pointer; }
+
+.ext-link { color: var(--brass-bright); text-decoration: underline; }

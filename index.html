@@ -131,9 +131,12 @@
   <div id="settings-sheet" class="sheet hidden">
     <div class="sheet-card">
       <h2>Settings</h2>
-      <label>Google Maps API key <span class="hint">(for the 3D flyover — free tier is plenty)</span>
+      <label>Google Maps API key <span class="hint">(for the satellite flyover and 3D slopes — free tier is plenty)</span>
         <input id="set-apikey" type="text" placeholder="AIza..." autocomplete="off">
       </label>
+      <p class="hint">For the slope lines, your key also needs the Elevation API:
+        <a class="ext-link" href="https://console.cloud.google.com/apis/library/elevation-backend.googleapis.com" target="_blank" rel="noopener">enable it here ↗</a>
+      </p>
       <label>Units
         <select id="set-units">
           <option value="yd">Yards</option>

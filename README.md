@@ -51,6 +51,9 @@ so it's effectively free, but Google asks for a card at sign-up.
 3. Add a card if it asks for billing (free-allowance thing; you won't be
    charged for normal use).
 4. Search **"Maps JavaScript API"** at the top → click it → press **Enable**.
+   For the 3D slope lines, also enable the
+   [**Elevation API**](https://console.cloud.google.com/apis/library/elevation-backend.googleapis.com)
+   (same button, one click).
 5. Left menu → **Keys & Credentials** → **Create credentials** → **API key**.
    Copy the long `AIza...` string.
 6. Open Golf Buddy → **⚙️ Settings** → paste the key → **Save**. Done.

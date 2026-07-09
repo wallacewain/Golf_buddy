@@ -21,7 +21,7 @@ import { Hole3D } from './hole3d.js';
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 
 /* ---------------------------------------------------------------- state */
 
@@ -48,13 +48,18 @@ let wakeLock = null;
 
 /* ------------------------------------------------------------- helpers */
 
-function toast(msg, ms = 3500) {
+function toast(msg, ms = 3500, onTap = null) {
   const el = $('#toast');
   el.textContent = msg;
   el.classList.add('show');
+  el.classList.toggle('tappable', !!onTap);
+  el.onclick = onTap ? () => { el.classList.remove('show'); onTap(); } : null;
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), ms);
 }
+
+const ELEVATION_API_URL =
+  'https://console.cloud.google.com/apis/library/elevation-backend.googleapis.com';
 
 function buzz(pattern = [80, 60, 80]) {
   try { navigator.vibrate?.(pattern); } catch { /* unsupported */ }
@@ -396,7 +401,11 @@ function showStylisedHole(hole) {
       // slopes silently missing is unhelpful — say why, once per round
       if (hole3d && !hole3d.heights?.data && window.google?.maps && !state.slopeWarned) {
         state.slopeWarned = true;
-        toast(`No slope data: ${lastElevationError() || 'unknown'}. The 3D slopes need the Elevation API enabled for your Google key.`, 8000);
+        toast(
+          `No slope data (${lastElevationError() || 'unknown'}). Tap here to open Google's page and enable the Elevation API.`,
+          12000,
+          () => window.open(ELEVATION_API_URL, '_blank', 'noopener'),
+        );
       }
     })
     .catch(e => console.warn('hole3d failed', e));
