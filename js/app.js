@@ -14,14 +14,14 @@ import { CLUBS, CTX, club, parseClub, rollFor, Caddie } from './caddie.js';
 import { courseList, courseBook, smartTips } from './analytics.js';
 import { Voice } from './voice.js';
 import { ShotListener } from './shotlistener.js';
-import { CourseMap, getGoogleElevations, lastElevationError } from './map3d.js';
+import { CourseMap, getGoogleElevations, lastElevationError, testElevation } from './map3d.js';
 import { HoleView } from './holeview.js';
 import { Hole3D } from './hole3d.js';
 
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v16';
+const APP_VERSION = 'v17';
 
 /* ---------------------------------------------------------------- state */
 
@@ -770,6 +770,7 @@ function openSettings() {
 }
 
 function saveSettings() {
+  const prevKey = state.settings.apiKey;
   state.settings = {
     apiKey: $('#set-apikey').value.trim(),
     units: $('#set-units').value,
@@ -781,7 +782,14 @@ function saveSettings() {
   store.saveSettings(state.settings);
   voice = new Voice(state.settings);
   $('#settings-sheet').classList.add('hidden');
+  state.slopeWarned = false; // let the slope warning re-run with fresh info
   if (state.hole) showStylisedHole(state.hole); // apply tree toggle live
+  // Google's script can only load once per page — a changed key needs a relaunch
+  if (state.settings.apiKey !== prevKey && window.google?.maps) {
+    if (state.round) toast('Key saved — restart the app after your round to apply it', 6000);
+    else { toast('Key saved — restarting…'); setTimeout(() => location.reload(), 800); }
+    return;
+  }
   toast('Settings saved');
 }
 
@@ -794,6 +802,13 @@ function boot() {
   $('#btn-settings-2').onclick = openSettings;
   $('#btn-stats').onclick = showStats;
   $('#settings-save').onclick = saveSettings;
+  $('#test-slopes').onclick = async () => {
+    const key = $('#set-apikey').value.trim();
+    if (!key) { toast('Enter your API key first'); return; }
+    toast('Testing slope data…', 10000);
+    const res = await testElevation(key);
+    toast(res.ok ? 'Slope data works — you’re all set ✓' : `Slopes failed: ${res.reason}`, 12000);
+  };
   $('#settings-close').onclick = () => $('#settings-sheet').classList.add('hidden');
   $('#stats-close').onclick = () => $('#stats-sheet').classList.add('hidden');
   for (const b of document.querySelectorAll('#insight-tabs button')) {

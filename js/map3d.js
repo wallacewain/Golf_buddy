@@ -58,11 +58,17 @@ export async function getGoogleElevations(latlngs, cacheKey) {
   }
   try {
     const { ElevationService } = await google.maps.importLibrary('elevation');
-    const { results } = await new ElevationService()
-      .getElevationForLocations({ locations: latlngs });
-    if (!results || results.length !== latlngs.length) {
-      elevationError = 'Elevation API returned no data';
-      return null;
+    const svc = new ElevationService();
+    // chunked requests keep us far away from any per-request limits
+    const results = [];
+    for (let i = 0; i < latlngs.length; i += 256) {
+      const chunk = latlngs.slice(i, i + 256);
+      const res = await svc.getElevationForLocations({ locations: chunk });
+      if (!res.results || res.results.length !== chunk.length) {
+        elevationError = 'Elevation API returned no data';
+        return null;
+      }
+      results.push(...res.results);
     }
     elevationError = null;
     const data = results.map(r => Math.round(r.elevation * 10) / 10);
@@ -78,8 +84,35 @@ export async function getGoogleElevations(latlngs, cacheKey) {
     return data;
   } catch (e) {
     console.warn('Elevation API unavailable', e);
-    elevationError = String(e?.message || e).slice(0, 120);
+    elevationError = friendlyElevationError(e);
     return null;
+  }
+}
+
+function friendlyElevationError(e) {
+  const s = String(e?.message || e);
+  if (s.includes('REQUEST_DENIED') || s.includes('ApiNotActivated') || s.includes('PERMISSION_DENIED')) {
+    return "your key isn't allowed to use the Elevation API — in Google Cloud open Credentials → your key → API restrictions and add 'Elevation API' (or set 'Don't restrict key'); also allow a few minutes after enabling";
+  }
+  if (s.includes('OVER_QUERY_LIMIT') || s.includes('OVER_DAILY_LIMIT') || s.includes('RESOURCE_EXHAUSTED')) {
+    return 'Elevation API quota exceeded — try again in a minute';
+  }
+  if (s.includes('INVALID_REQUEST')) return 'Elevation API rejected the request';
+  return s.slice(0, 140);
+}
+
+/** Settings "Test slope data" button: one tiny elevation request, clear verdict. */
+export async function testElevation(apiKey) {
+  try {
+    await loadGoogleMaps(apiKey);
+    const { ElevationService } = await google.maps.importLibrary('elevation');
+    const { results } = await new ElevationService().getElevationForLocations({
+      locations: [{ lat: 56.3481, lng: -2.8302 }, { lat: 56.349, lng: -2.831 }],
+    });
+    if (results?.length === 2) return { ok: true };
+    return { ok: false, reason: 'no data returned' };
+  } catch (e) {
+    return { ok: false, reason: friendlyElevationError(e) };
   }
 }
 
