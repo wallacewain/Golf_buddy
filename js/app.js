@@ -21,7 +21,7 @@ import { Hole3D } from './hole3d.js';
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v17';
+const APP_VERSION = 'v18';
 
 /* ---------------------------------------------------------------- state */
 
@@ -57,9 +57,6 @@ function toast(msg, ms = 3500, onTap = null) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), ms);
 }
-
-const ELEVATION_API_URL =
-  'https://console.cloud.google.com/apis/library/elevation-backend.googleapis.com';
 
 function buzz(pattern = [80, 60, 80]) {
   try { navigator.vibrate?.(pattern); } catch { /* unsupported */ }
@@ -401,10 +398,11 @@ function showStylisedHole(hole) {
       // slopes silently missing is unhelpful — say why, once per round
       if (hole3d && !hole3d.heights?.data && window.google?.maps && !state.slopeWarned) {
         state.slopeWarned = true;
+        const err = lastElevationError();
         toast(
-          `No slope data (${lastElevationError() || 'unknown'}). Tap here to open Google's page and enable the Elevation API.`,
+          `No slope data — ${err?.msg || 'unknown'}${err?.url ? '. Tap here to fix it.' : ''}`,
           12000,
-          () => window.open(ELEVATION_API_URL, '_blank', 'noopener'),
+          err?.url ? () => window.open(err.url, '_blank', 'noopener') : null,
         );
       }
     })
@@ -807,7 +805,12 @@ function boot() {
     if (!key) { toast('Enter your API key first'); return; }
     toast('Testing slope data…', 10000);
     const res = await testElevation(key);
-    toast(res.ok ? 'Slope data works — you’re all set ✓' : `Slopes failed: ${res.reason}`, 12000);
+    if (res.ok) toast('Slope data works — you’re all set ✓', 8000);
+    else toast(
+      `Slopes failed: ${res.reason}${res.url ? '. Tap here to fix it.' : ''}`,
+      14000,
+      res.url ? () => window.open(res.url, '_blank', 'noopener') : null,
+    );
   };
   $('#settings-close').onclick = () => $('#settings-sheet').classList.add('hidden');
   $('#stats-close').onclick = () => $('#stats-sheet').classList.add('hidden');

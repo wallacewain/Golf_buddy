@@ -43,9 +43,15 @@ export function loadGoogleMaps(apiKey) {
  * Results are cached per hole on-device — one API hit per hole, ever. */
 const ELEV_CACHE_KEY = 'gb.elev.v1';
 
-let elevationError = null;
+let elevationError = null; // { msg, url } | null
 /** Why the last elevation fetch failed (null = it worked / not tried). */
 export function lastElevationError() { return elevationError; }
+
+const URLS = {
+  billing: 'https://console.cloud.google.com/project/_/billing/enable',
+  enableApi: 'https://console.cloud.google.com/apis/library/elevation-backend.googleapis.com',
+  credentials: 'https://console.cloud.google.com/apis/credentials',
+};
 
 export async function getGoogleElevations(latlngs, cacheKey) {
   try {
@@ -53,7 +59,7 @@ export async function getGoogleElevations(latlngs, cacheKey) {
     if (cacheKey && all[cacheKey]?.length === latlngs.length) return all[cacheKey];
   } catch { /* corrupt cache */ }
   if (!window.google?.maps?.importLibrary) {
-    elevationError = 'Google Maps not loaded — add an API key in Settings';
+    elevationError = { msg: 'Google Maps not loaded — add an API key in Settings', url: null };
     return null;
   }
   try {
@@ -65,7 +71,7 @@ export async function getGoogleElevations(latlngs, cacheKey) {
       const chunk = latlngs.slice(i, i + 256);
       const res = await svc.getElevationForLocations({ locations: chunk });
       if (!res.results || res.results.length !== chunk.length) {
-        elevationError = 'Elevation API returned no data';
+        elevationError = { msg: 'Elevation API returned no data', url: null };
         return null;
       }
       results.push(...res.results);
@@ -91,14 +97,27 @@ export async function getGoogleElevations(latlngs, cacheKey) {
 
 function friendlyElevationError(e) {
   const s = String(e?.message || e);
-  if (s.includes('REQUEST_DENIED') || s.includes('ApiNotActivated') || s.includes('PERMISSION_DENIED')) {
-    return "your key isn't allowed to use the Elevation API — in Google Cloud open Credentials → your key → API restrictions and add 'Elevation API' (or set 'Don't restrict key'); also allow a few minutes after enabling";
+  // billing first — Google folds it into REQUEST_DENIED text, so check before that
+  if (/billing/i.test(s) || s.includes('BillingNotEnabled')) {
+    return {
+      msg: "your Google project has no billing account — the free tier still needs a card on file (you won't be charged within the free allowance)",
+      url: URLS.billing,
+    };
+  }
+  if (s.includes('ApiNotActivated') || s.includes('API_NOT_ACTIVATED')) {
+    return { msg: 'the Elevation API is not enabled on your project', url: URLS.enableApi };
+  }
+  if (s.includes('REQUEST_DENIED') || s.includes('PERMISSION_DENIED')) {
+    return {
+      msg: "your key isn't allowed to use the Elevation API — open your key's API restrictions and add 'Elevation API' (or set 'Don't restrict key'); also allow a few minutes after enabling",
+      url: URLS.credentials,
+    };
   }
   if (s.includes('OVER_QUERY_LIMIT') || s.includes('OVER_DAILY_LIMIT') || s.includes('RESOURCE_EXHAUSTED')) {
-    return 'Elevation API quota exceeded — try again in a minute';
+    return { msg: 'Elevation API quota exceeded — try again in a minute', url: null };
   }
-  if (s.includes('INVALID_REQUEST')) return 'Elevation API rejected the request';
-  return s.slice(0, 140);
+  if (s.includes('INVALID_REQUEST')) return { msg: 'Elevation API rejected the request', url: null };
+  return { msg: s.slice(0, 140), url: URLS.enableApi };
 }
 
 /** Settings "Test slope data" button: one tiny elevation request, clear verdict. */
@@ -110,9 +129,10 @@ export async function testElevation(apiKey) {
       locations: [{ lat: 56.3481, lng: -2.8302 }, { lat: 56.349, lng: -2.831 }],
     });
     if (results?.length === 2) return { ok: true };
-    return { ok: false, reason: 'no data returned' };
+    return { ok: false, reason: 'no data returned', url: null };
   } catch (e) {
-    return { ok: false, reason: friendlyElevationError(e) };
+    const f = friendlyElevationError(e);
+    return { ok: false, reason: f.msg, url: f.url };
   }
 }
 
