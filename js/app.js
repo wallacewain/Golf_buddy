@@ -21,7 +21,7 @@ import { Hole3D } from './hole3d.js';
 const $ = (sel) => document.querySelector(sel);
 
 // bump together with the sw.js cache version on every release
-const APP_VERSION = 'v18';
+const APP_VERSION = 'v19';
 
 /* ---------------------------------------------------------------- state */
 
@@ -50,12 +50,17 @@ let wakeLock = null;
 
 function toast(msg, ms = 3500, onTap = null) {
   const el = $('#toast');
+  // fully disarm on hide — an invisible toast must never swallow taps
+  const hide = () => {
+    el.classList.remove('show', 'tappable');
+    el.onclick = null;
+  };
   el.textContent = msg;
   el.classList.add('show');
   el.classList.toggle('tappable', !!onTap);
-  el.onclick = onTap ? () => { el.classList.remove('show'); onTap(); } : null;
+  el.onclick = onTap ? () => { hide(); onTap(); } : null;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove('show'), ms);
+  toast._t = setTimeout(hide, ms);
 }
 
 function buzz(pattern = [80, 60, 80]) {
